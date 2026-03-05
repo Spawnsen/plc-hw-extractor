@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PLC Hardware Extractor</title>
+  <meta name="description" content="Analysieren und exportieren Sie SPS-Hardware-Konfigurationen direkt im Browser." />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/style.css" />
+
+  <style>
+    /* ── Index-page specific styles ─────────────────────────────── */
+
+    .hero {
+      padding: 72px 0 48px;
+      text-align: center;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 14px;
+      border-radius: 999px;
+      background: rgba(79, 142, 247, 0.12);
+      border: 1px solid rgba(79, 142, 247, 0.3);
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+
+    .hero h1 {
+      background: linear-gradient(135deg, var(--text-primary) 30%, var(--accent) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 16px;
+    }
+
+    .hero p {
+      font-size: 1.1rem;
+      max-width: 560px;
+      margin: 0 auto 40px;
+      color: var(--text-secondary);
+    }
+
+    /* Extractor Grid */
+    .extractor-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: var(--spacing-lg);
+      padding-bottom: var(--spacing-2xl);
+    }
+
+    /* Extractor Card */
+    .extractor-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--spacing-xl);
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacing-md);
+      transition: border-color var(--transition), transform var(--transition),
+                  box-shadow var(--transition);
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .extractor-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(79, 142, 247, 0.14);
+      color: inherit;
+    }
+
+    .extractor-card-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: var(--radius-md);
+      background: linear-gradient(135deg, rgba(79, 142, 247, 0.2), rgba(0, 212, 170, 0.1));
+      border: 1px solid rgba(79, 142, 247, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+    }
+
+    .extractor-card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .extractor-card-desc {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      flex: 1;
+    }
+
+    .extractor-card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: var(--spacing-sm);
+    }
+
+    .extractor-card:hover .btn-primary {
+      background: linear-gradient(135deg, #6aa3ff, var(--accent));
+    }
+
+    /* Coming soon card */
+    .extractor-card.coming-soon {
+      opacity: 0.5;
+      cursor: default;
+      pointer-events: none;
+    }
+
+    /* Section header */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--spacing-lg);
+    }
+
+    .section-header h2 {
+      font-size: 1.1rem;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 48px 0 32px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header class="app-header">
+    <div class="container">
+      <a href="index.html" class="app-logo">
+        <span class="logo-icon">
+          <i data-lucide="cpu" style="width:18px;height:18px;"></i>
+        </span>
+        PLC Extractor
+      </a>
+      <span class="badge badge-primary">v1.0.0</span>
+    </div>
+  </header>
+
+  <!-- ── Hero ────────────────────────────────────────────────────── -->
+  <main>
+    <section class="hero container">
+      <div class="hero-badge">
+        <i data-lucide="zap" style="width:12px;height:12px;"></i>
+        Läuft vollständig im Browser
+      </div>
+      <h1>PLC Hardware Extractor</h1>
+      <p>
+        Analysieren Sie SPS-Hardware-Konfigurationsdateien und exportieren Sie
+        strukturierte Daten als JSON — ohne Server, ohne Installation.
+      </p>
+    </section>
+
+    <!-- ── Extractor Cards ──────────────────────────────────────── -->
+    <section class="container">
+      <div class="section-header">
+        <h2>Extractor auswählen</h2>
+      </div>
+
+      <div class="extractor-grid">
+
+        <!-- STEP 7 Card -->
+        <a href="pages/step7.html" class="extractor-card">
+          <div class="extractor-card-icon">
+            <i data-lucide="file-code-2" style="width:26px;height:26px;"></i>
+          </div>
+          <h3 class="extractor-card-title">STEP 7</h3>
+          <p class="extractor-card-desc">
+            Siemens STEP 7 .cfg Dateien analysieren. Extrahiert Rack-Konfiguration,
+            PROFIBUS DP-Slaves und alle I/O-Signale.
+          </p>
+          <div class="extractor-card-footer">
+            <span class="badge badge-success">Verfügbar</span>
+            <button class="btn btn-primary" tabindex="-1">
+              Starten
+              <i data-lucide="arrow-right" style="width:16px;height:16px;"></i>
+            </button>
+          </div>
+        </a>
+
+        <!-- TIA Portal Card (Coming Soon) -->
+        <div class="extractor-card coming-soon">
+          <div class="extractor-card-icon" style="background: rgba(139,147,168,0.1); border-color: rgba(139,147,168,0.2); color: var(--text-secondary);">
+            <i data-lucide="layers" style="width:26px;height:26px;"></i>
+          </div>
+          <h3 class="extractor-card-title">TIA Portal</h3>
+          <p class="extractor-card-desc">
+            Siemens TIA Portal Projektkonfigurationen analysieren.
+            Unterstützung für .ap15/.ap17 Projektdateien geplant.
+          </p>
+          <div class="extractor-card-footer">
+            <span class="badge badge-secondary">Demnächst</span>
+            <button class="btn btn-ghost" tabindex="-1" disabled>
+              Bald verfügbar
+            </button>
+          </div>
+        </div>
+
+        <!-- RSLogix Card (Coming Soon) -->
+        <div class="extractor-card coming-soon">
+          <div class="extractor-card-icon" style="background: rgba(139,147,168,0.1); border-color: rgba(139,147,168,0.2); color: var(--text-secondary);">
+            <i data-lucide="server" style="width:26px;height:26px;"></i>
+          </div>
+          <h3 class="extractor-card-title">RSLogix</h3>
+          <p class="extractor-card-desc">
+            Allen-Bradley RSLogix 5000 / Studio 5000 Projektkonfigurationen
+            verarbeiten. Export von Tags und Modulen.
+          </p>
+          <div class="extractor-card-footer">
+            <span class="badge badge-secondary">Demnächst</span>
+            <button class="btn btn-ghost" tabindex="-1" disabled>
+              Bald verfügbar
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Footer ──────────────────────────────────────────────────── -->
+  <footer class="app-footer">
+    <div class="container">
+      <p>PLC Hardware Extractor &mdash; v1.0.0 &mdash; Läuft lokal im Browser</p>
+    </div>
+  </footer>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>

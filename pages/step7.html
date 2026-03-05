@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>STEP 7 Extractor – PLC Hardware Extractor</title>
+  <meta name="description" content="Siemens STEP 7 .cfg Dateien analysieren und als JSON exportieren." />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="../css/style.css" />
+  <link rel="stylesheet" href="../css/step7.css" />
+</head>
+<body class="step7-page">
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header class="app-header">
+    <div class="container">
+      <a href="../index.html" class="app-logo">
+        <span class="logo-icon">
+          <i data-lucide="cpu" style="width:18px;height:18px;"></i>
+        </span>
+        PLC Extractor
+      </a>
+      <span class="badge badge-primary">STEP 7</span>
+    </div>
+  </header>
+
+  <!-- ── Main Content ─────────────────────────────────────────────── -->
+  <main class="step7-content">
+    <div class="container">
+
+      <!-- Back navigation -->
+      <nav class="back-nav">
+        <a href="../index.html" class="back-link">
+          <i data-lucide="arrow-left" style="width:16px;height:16px;"></i>
+          Zurück zur Übersicht
+        </a>
+      </nav>
+
+      <!-- ════════════════════════════════════════════════════════
+           STATE 1: Upload View
+           ════════════════════════════════════════════════════════ -->
+      <div class="state-view active" data-state="upload">
+
+        <div class="upload-header">
+          <h1>STEP 7 Extractor</h1>
+          <p>Laden Sie eine STEP 7 <code>.cfg</code> Datei hoch, um die Hardware-Konfiguration zu analysieren.</p>
+        </div>
+
+        <!-- Drop Zone -->
+        <div
+          id="drop-zone"
+          class="drop-zone"
+          role="button"
+          tabindex="0"
+          aria-label="CFG-Datei hochladen"
+        >
+          <input
+            type="file"
+            id="file-input"
+            class="file-input-hidden"
+            accept=".cfg"
+            aria-label="CFG-Datei auswählen"
+          />
+
+          <div class="drop-zone-icon">
+            <i data-lucide="upload-cloud" style="width:52px;height:52px;"></i>
+          </div>
+
+          <h3>Datei hier ablegen</h3>
+          <p>oder klicken um eine Datei auszuwählen</p>
+          <p class="drop-zone-hint">Nur <strong>.cfg</strong> Dateien werden akzeptiert</p>
+
+          <!-- Selected file info -->
+          <div id="selected-file-info" class="selected-file-info">
+            <i data-lucide="file-check" style="width:16px;height:16px;"></i>
+            <span id="selected-file-name">–</span>
+          </div>
+
+          <!-- Inline error -->
+          <div id="upload-error" class="upload-error">
+            <i data-lucide="alert-circle" style="width:16px;height:16px;"></i>
+            <span class="error-text"></span>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="upload-actions">
+          <button
+            id="btn-analyze"
+            class="btn btn-primary"
+            disabled
+          >
+            <i data-lucide="scan-line" style="width:18px;height:18px;"></i>
+            Datei analysieren
+          </button>
+        </div>
+
+      </div><!-- /upload state -->
+
+
+      <!-- ════════════════════════════════════════════════════════
+           STATE 2: Processing View
+           ════════════════════════════════════════════════════════ -->
+      <div class="state-view processing-view" data-state="processing">
+        <div class="processing-spinner-wrap">
+          <div class="spinner"></div>
+        </div>
+        <h2>Datei wird verarbeitet...</h2>
+        <p id="processing-filename" class="processing-filename">–</p>
+      </div>
+
+
+      <!-- ════════════════════════════════════════════════════════
+           STATE 3: Results View
+           ════════════════════════════════════════════════════════ -->
+      <div class="state-view results-view" data-state="results">
+
+        <!-- Summary Header -->
+        <div class="results-summary">
+          <div class="results-summary-top">
+            <div class="results-summary-title">
+              <h2 id="result-station-name">–</h2>
+              <div class="filename" id="result-filename">–</div>
+            </div>
+            <div class="results-actions">
+              <button id="btn-new-export" class="btn btn-ghost">
+                <i data-lucide="rotate-ccw" style="width:16px;height:16px;"></i>
+                Neuen Export starten
+              </button>
+              <button id="btn-export-json" class="btn btn-success">
+                <i data-lucide="download" style="width:16px;height:16px;"></i>
+                JSON exportieren
+              </button>
+            </div>
+          </div>
+
+          <!-- Stats -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-value" id="stat-slaves">–</div>
+              <div class="stat-label">DP-Slaves</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="stat-modules">–</div>
+              <div class="stat-label">I/O Module</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="stat-inputs">–</div>
+              <div class="stat-label">Eingänge</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="stat-outputs">–</div>
+              <div class="stat-label">Ausgänge</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="stat-total-signals">–</div>
+              <div class="stat-label">Signale gesamt</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Section: Station Info ────────────────────────── -->
+        <div class="collapsible-section open" id="section-station">
+          <button class="collapsible-header" aria-expanded="true">
+            <div class="collapsible-header-left">
+              <i data-lucide="info" style="width:18px;height:18px;color:var(--accent)"></i>
+              <h3>Station Info</h3>
+            </div>
+            <i data-lucide="chevron-down" class="collapsible-icon" style="width:18px;height:18px;"></i>
+          </button>
+          <div class="collapsible-body">
+            <div class="info-grid" id="station-info-grid">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Section: Networks ────────────────────────────── -->
+        <div class="collapsible-section open" id="section-networks">
+          <button class="collapsible-header" aria-expanded="true">
+            <div class="collapsible-header-left">
+              <i data-lucide="network" style="width:18px;height:18px;color:var(--accent)"></i>
+              <h3>Netzwerke</h3>
+            </div>
+            <i data-lucide="chevron-down" class="collapsible-icon" style="width:18px;height:18px;"></i>
+          </button>
+          <div class="collapsible-body">
+            <div class="network-list" id="networks-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Section: Rack ────────────────────────────────── -->
+        <div class="collapsible-section open" id="section-rack">
+          <button class="collapsible-header" aria-expanded="true">
+            <div class="collapsible-header-left">
+              <i data-lucide="server" style="width:18px;height:18px;color:var(--accent)"></i>
+              <h3>Rack-Konfiguration</h3>
+            </div>
+            <i data-lucide="chevron-down" class="collapsible-icon" style="width:18px;height:18px;"></i>
+          </button>
+          <div class="collapsible-body">
+            <div id="rack-info">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Section: DP Slaves ───────────────────────────── -->
+        <div class="collapsible-section" id="section-slaves">
+          <button class="collapsible-header" aria-expanded="false">
+            <div class="collapsible-header-left">
+              <i data-lucide="git-fork" style="width:18px;height:18px;color:var(--accent)"></i>
+              <h3>PROFIBUS DP-Slaves</h3>
+              <span class="badge badge-primary" id="badge-slaves-count">0</span>
+            </div>
+            <i data-lucide="chevron-down" class="collapsible-icon" style="width:18px;height:18px;"></i>
+          </button>
+          <div class="collapsible-body">
+            <div class="slaves-list" id="slaves-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Section: I/O Signals ─────────────────────────── -->
+        <div class="collapsible-section" id="section-signals">
+          <button class="collapsible-header" aria-expanded="false">
+            <div class="collapsible-header-left">
+              <i data-lucide="activity" style="width:18px;height:18px;color:var(--accent)"></i>
+              <h3>I/O Signale</h3>
+              <span class="badge badge-primary" id="badge-signals-count">0</span>
+            </div>
+            <i data-lucide="chevron-down" class="collapsible-icon" style="width:18px;height:18px;"></i>
+          </button>
+          <div class="collapsible-body">
+            <!-- Filter Bar -->
+            <div class="filter-bar">
+              <div class="filter-search">
+                <i data-lucide="search" class="search-icon" style="width:16px;height:16px;"></i>
+                <input
+                  type="text"
+                  id="signal-search"
+                  placeholder="Slave-Name oder Symbolname suchen..."
+                  autocomplete="off"
+                />
+              </div>
+              <select id="signal-type-filter" class="filter-select" aria-label="Signaltyp Filter">
+                <option value="all">Alle Typen</option>
+                <option value="I">Nur Eingänge (I)</option>
+                <option value="O">Nur Ausgänge (O)</option>
+              </select>
+              <span class="filter-count" id="signal-filter-count">0 Signale</span>
+            </div>
+
+            <!-- Signals Table -->
+            <div class="table-wrapper">
+              <table id="signals-table" aria-label="I/O Signaltabelle">
+                <thead>
+                  <tr>
+                    <th>Slave</th>
+                    <th>Adresse</th>
+                    <th>Modul</th>
+                    <th>Slot</th>
+                    <th>Typ</th>
+                    <th>Byte</th>
+                    <th>Bit</th>
+                    <th>Symbolname</th>
+                    <th>Kommentar</th>
+                  </tr>
+                </thead>
+                <tbody id="signals-table-body">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /results state -->
+
+    </div><!-- /container -->
+  </main>
+
+  <!-- ── Footer ──────────────────────────────────────────────────── -->
+  <footer class="app-footer">
+    <div class="container">
+      <p>PLC Hardware Extractor &mdash; v1.0.0</p>
+    </div>
+  </footer>
+
+  <!-- ── Toast Container (dynamically added by ui.js) ─────────── -->
+
+  <!-- ── Scripts ─────────────────────────────────────────────────── -->
+  <script src="../js/ui.js"></script>
+  <script src="../js/step7-parser.js"></script>
+  <script src="../js/exporter.js"></script>
+
+  <script>
+    'use strict';
+
+    // ── Lucide icons init ──────────────────────────────────────────
+    lucide.createIcons();
+
+    // ── State ──────────────────────────────────────────────────────
+    let selectedFile = null;
+    let parsedData   = null;
+    let allSignals   = [];
+
+    // ── Element refs ───────────────────────────────────────────────
+    const dropZone          = document.getElementById('drop-zone');
+    const fileInput         = document.getElementById('file-input');
+    const btnAnalyze        = document.getElementById('btn-analyze');
+    const selectedFileInfo  = document.getElementById('selected-file-info');
+    const selectedFileName  = document.getElementById('selected-file-name');
+    const processingFilename = document.getElementById('processing-filename');
+    const btnNewExport      = document.getElementById('btn-new-export');
+    const btnExportJson     = document.getElementById('btn-export-json');
+    const signalSearch      = document.getElementById('signal-search');
+    const signalTypeFilter  = document.getElementById('signal-type-filter');
+    const signalFilterCount = document.getElementById('signal-filter-count');
+    const signalsTableBody  = document.getElementById('signals-table-body');
+
+    // ── Collapsible Sections ──────────────────────────────────────
+    document.querySelectorAll('.collapsible-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const section = header.closest('.collapsible-section');
+        const isOpen  = section.classList.toggle('open');
+        header.setAttribute('aria-expanded', isOpen.toString());
+        // Re-render icons (chevron rotates via CSS)
+      });
+    });
+
+    // ── Drag & Drop ───────────────────────────────────────────────
+    dropZone.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', e => {
+      if (!dropZone.contains(e.relatedTarget)) {
+        dropZone.classList.remove('drag-over');
+      }
+    });
+
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file) handleFileSelection(file);
+    });
+
+    // Keyboard activation of drop zone
+    dropZone.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    // File input change
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length > 0) {
+        handleFileSelection(fileInput.files[0]);
+      }
+    });
+
+    /**
+     * Validates and stores the selected file.
+     * @param {File} file
+     */
+    function handleFileSelection(file) {
+      UI.clearError();
+
+      if (!file.name.toLowerCase().endsWith('.cfg')) {
+        UI.showError(`Ungültiger Dateityp: "${_escapeHtml(file.name)}" — Nur .cfg Dateien werden akzeptiert.`);
+        selectedFile = null;
+        btnAnalyze.disabled = true;
+        selectedFileInfo.classList.remove('visible');
+        dropZone.classList.remove('has-file');
+        // Re-render icons in error div
+        lucide.createIcons();
+        return;
+      }
+
+      selectedFile = file;
+      selectedFileName.textContent = file.name;
+      selectedFileInfo.classList.add('visible');
+      dropZone.classList.add('has-file');
+      btnAnalyze.disabled = false;
+      // Re-render icons
+      lucide.createIcons();
+    }
+
+    // ── Analyze Button ─────────────────────────────────────────────
+    btnAnalyze.addEventListener('click', () => {
+      if (!selectedFile) return;
+      startProcessing(selectedFile);
+    });
+
+    /**
+     * Reads and processes the selected file.
+     * @param {File} file
+     */
+    function startProcessing(file) {
+      processingFilename.textContent = file.name;
+      UI.showState('processing');
+
+      const reader = new FileReader();
+      const startTime = Date.now();
+
+      reader.onload = e => {
+        const text = e.target.result;
+        let data;
+
+        try {
+          data = Step7Parser.parseStep7Cfg(text);
+        } catch (err) {
+          console.error('[step7] Parse error:', err);
+          // Ensure minimum display time even on error
+          const elapsed  = Date.now() - startTime;
+          const remaining = Math.max(0, 600 - elapsed);
+          setTimeout(() => {
+            UI.showState('upload');
+            UI.showNotification('Fehler beim Analysieren der Datei: ' + err.message, 'error');
+          }, remaining);
+          return;
+        }
+
+        parsedData = data;
+        allSignals = data.signals || [];
+
+        // Ensure at least 600ms processing display for UX
+        const elapsed   = Date.now() - startTime;
+        const remaining = Math.max(0, 600 - elapsed);
+
+        setTimeout(() => {
+          renderResults(data, file.name);
+          UI.showState('results');
+          lucide.createIcons();
+        }, remaining);
+      };
+
+      reader.onerror = () => {
+        UI.showState('upload');
+        UI.showNotification('Fehler beim Lesen der Datei.', 'error');
+      };
+
+      reader.readAsText(file, 'utf-8');
+    }
+
+    // ── Reset ──────────────────────────────────────────────────────
+    btnNewExport.addEventListener('click', () => {
+      selectedFile = null;
+      parsedData   = null;
+      allSignals   = [];
+      fileInput.value = '';
+      selectedFileInfo.classList.remove('visible');
+      dropZone.classList.remove('has-file', 'has-error');
+      btnAnalyze.disabled = true;
+      UI.clearError();
+      UI.showState('upload');
+    });
+
+    // ── JSON Export ────────────────────────────────────────────────
+    btnExportJson.addEventListener('click', () => {
+      if (!parsedData) return;
+      Exporter.exportAsJson(parsedData);
+      UI.showNotification('JSON-Datei wird heruntergeladen…', 'success');
+    });
+
+    // ── Signal Filtering ───────────────────────────────────────────
+    signalSearch.addEventListener('input',     renderSignalTable);
+    signalTypeFilter.addEventListener('change', renderSignalTable);
+
+    // ── Render Functions ───────────────────────────────────────────
+
+    /**
+     * Renders all result sections.
+     * @param {Object} data
+     * @param {string} fileName
+     */
+    function renderResults(data, fileName) {
+      // Summary
+      const station = data.station || {};
+      document.getElementById('result-station-name').textContent =
+        station.name || 'Unbekannte Station';
+      document.getElementById('result-filename').textContent = fileName;
+
+      const slaves    = data.dpSlaves || [];
+      const modules   = slaves.reduce((n, s) => n + (s.slots || []).length, 0);
+      const inputs    = allSignals.filter(s => s.type === 'I').length;
+      const outputs   = allSignals.filter(s => s.type === 'O').length;
+      const totalSigs = allSignals.length;
+
+      document.getElementById('stat-slaves').textContent        = slaves.length;
+      document.getElementById('stat-modules').textContent       = modules;
+      document.getElementById('stat-inputs').textContent        = inputs;
+      document.getElementById('stat-outputs').textContent       = outputs;
+      document.getElementById('stat-total-signals').textContent = totalSigs;
+      document.getElementById('badge-slaves-count').textContent = slaves.length;
+      document.getElementById('badge-signals-count').textContent = totalSigs;
+
+      renderStationInfo(data);
+      renderNetworks(data.subnets || []);
+      renderRack(data.rack);
+      renderSlaves(slaves);
+      renderSignalTable();
+    }
+
+    /**
+     * Renders Station Info section.
+     */
+    function renderStationInfo(data) {
+      const grid    = document.getElementById('station-info-grid');
+      const station = data.station || {};
+      const meta    = data.meta    || {};
+
+      const items = [
+        { label: 'Name',          value: station.name        || '–' },
+        { label: 'Typ',           value: station.type        || '–' },
+        { label: 'Asset-ID',      value: station.assetId     || '–' },
+        { label: 'Dateiversion',  value: meta.fileVersion    || '–' },
+        { label: 'STEP 7 Version',value: meta.step7Version   || '–' },
+        { label: 'Erstellt',      value: meta.created        || '–' },
+      ];
+
+      grid.innerHTML = items.map(item => `
+        <div class="info-item">
+          <span class="info-label">${_escapeHtml(item.label)}</span>
+          <span class="info-value">${_escapeHtml(String(item.value))}</span>
+        </div>
+      `).join('');
+    }
+
+    /**
+     * Renders the Networks section.
+     * @param {Array} subnets
+     */
+    function renderNetworks(subnets) {
+      const list = document.getElementById('networks-list');
+
+      if (!subnets.length) {
+        list.innerHTML = '<p class="empty-state">Keine Netzwerke gefunden.</p>';
+        return;
+      }
+
+      list.innerHTML = subnets.map(net => `
+        <div class="network-item">
+          <span class="net-name">${_escapeHtml(net.name || net.type || 'Unbekannt')}</span>
+          <span class="badge ${net.type === 'PROFIBUS' ? 'badge-warning' : 'badge-primary'}">
+            ${_escapeHtml(net.type || '–')}
+          </span>
+          ${net.netId ? `<span class="net-id">${_escapeHtml(net.netId)}</span>` : ''}
+          ${net.baudrate ? `<span class="badge badge-secondary">${_escapeHtml(net.baudrate)}</span>` : ''}
+        </div>
+      `).join('');
+    }
+
+    /**
+     * Renders the Rack section.
+     * @param {Object|null} rack
+     */
+    function renderRack(rack) {
+      const container = document.getElementById('rack-info');
+
+      if (!rack) {
+        container.innerHTML = '<p class="empty-state">Keine Rack-Konfiguration gefunden.</p>';
+        return;
+      }
+
+      const slotsHtml = (rack.slots || []).length
+        ? `
+          <div class="table-wrapper">
+            <table aria-label="Rack-Slots">
+              <thead>
+                <tr>
+                  <th>Slot</th>
+                  <th>Bestellnummer</th>
+                  <th>Name</th>
+                  <th>Typ</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rack.slots.map(slot => `
+                  <tr>
+                    <td>${slot.slot}</td>
+                    <td><code>${_escapeHtml(slot.articleNumber || '–')}</code></td>
+                    <td>${_escapeHtml(slot.name || '–')}</td>
+                    <td><span class="type-badge type-badge-${_escapeHtml(slot.type || 'SM')}">${_escapeHtml(slot.type || 'SM')}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>`
+        : '<p class="empty-state">Keine Slots gefunden.</p>';
+
+      container.innerHTML = `
+        <div class="rack-info">
+          <div class="rack-meta">
+            <strong>${_escapeHtml(rack.name || 'Rack ' + rack.rackNo)}</strong>
+            <span class="rack-article">${_escapeHtml(rack.articleNumber || '')}</span>
+            <span class="badge badge-secondary">Rack ${rack.rackNo}</span>
+          </div>
+          ${slotsHtml}
+        </div>
+      `;
+    }
+
+    /**
+     * Renders the DP Slaves section.
+     * @param {Array} slaves
+     */
+    function renderSlaves(slaves) {
+      const list = document.getElementById('slaves-list');
+
+      if (!slaves.length) {
+        list.innerHTML = '<p class="empty-state">Keine DP-Slaves gefunden.</p>';
+        return;
+      }
+
+      list.innerHTML = slaves.map(slave => {
+        const slotsHtml = (slave.slots || []).length
+          ? `
+            <div class="slave-slots-table">
+              <div class="table-wrapper">
+                <table aria-label="Slave Slots">
+                  <thead>
+                    <tr>
+                      <th>Slot</th>
+                      <th>Modul</th>
+                      <th>Name</th>
+                      <th>Richtung</th>
+                      <th>Byte-Adresse</th>
+                      <th>Signale</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${slave.slots.map(slot => `
+                      <tr>
+                        <td>${slot.slot}</td>
+                        <td><code style="font-size:0.8rem">${_escapeHtml(slot.moduleType || '–')}</code></td>
+                        <td>${_escapeHtml(slot.moduleName || '–')}</td>
+                        <td>
+                          ${slot.direction
+                            ? `<span class="type-badge type-badge-${_escapeHtml(slot.direction === 'IN' ? 'I' : 'O')}">${_escapeHtml(slot.direction)}</span>`
+                            : '–'}
+                        </td>
+                        <td>${slot.byteAddress !== null ? slot.byteAddress : '–'}</td>
+                        <td>${(slot.signals || []).length}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>`
+          : '<p class="empty-state" style="padding:var(--spacing-md)">Keine Slots gefunden.</p>';
+
+        return `
+          <div class="slave-card">
+            <div class="slave-header">
+              <span class="slave-name">${_escapeHtml(slave.name || 'Slave ' + slave.dpAddress)}</span>
+              <span class="slave-addr">DP ${slave.dpAddress}</span>
+              ${slave.gsdFile ? `<span class="slave-gsd">${_escapeHtml(slave.gsdFile)}</span>` : ''}
+            </div>
+            ${slotsHtml}
+          </div>
+        `;
+      }).join('');
+    }
+
+    /**
+     * Renders (and re-renders) the filtered signals table.
+     */
+    function renderSignalTable() {
+      const searchTerm = signalSearch.value.toLowerCase().trim();
+      const typeFilter = signalTypeFilter.value;
+
+      const filtered = allSignals.filter(sig => {
+        const matchType   = typeFilter === 'all' || sig.type === typeFilter;
+        const matchSearch = !searchTerm
+          || (sig.slaveName  || '').toLowerCase().includes(searchTerm)
+          || (sig.symbolName || '').toLowerCase().includes(searchTerm)
+          || (sig.comment    || '').toLowerCase().includes(searchTerm);
+        return matchType && matchSearch;
+      });
+
+      signalFilterCount.textContent = `${filtered.length} Signal${filtered.length !== 1 ? 'e' : ''}`;
+
+      if (!filtered.length) {
+        signalsTableBody.innerHTML = `
+          <tr>
+            <td colspan="9" style="text-align:center; padding:var(--spacing-xl); color:var(--text-secondary)">
+              Keine Signale gefunden.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      signalsTableBody.innerHTML = filtered.map(sig => `
+        <tr>
+          <td>${_escapeHtml(sig.slaveName || '–')}</td>
+          <td>${sig.slaveAddress !== undefined ? sig.slaveAddress : '–'}</td>
+          <td><span style="font-size:0.78rem;font-family:monospace">${_escapeHtml(sig.module || '–')}</span></td>
+          <td>${sig.slot !== undefined ? sig.slot : '–'}</td>
+          <td><span class="type-badge type-badge-${_escapeHtml(sig.type)}">${_escapeHtml(sig.type)}</span></td>
+          <td>${sig.byteAddress !== null && sig.byteAddress !== undefined ? sig.byteAddress : '–'}</td>
+          <td>${sig.bit !== undefined ? sig.bit : '–'}</td>
+          <td>${_escapeHtml(sig.symbolName || '–')}</td>
+          <td style="color:var(--text-secondary)">${_escapeHtml(sig.comment || '')}</td>
+        </tr>
+      `).join('');
+    }
+
+    // ── Local escape helper (mirrors ui.js but available here too) ─
+    function _escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#x27;');
+    }
+
+  </script>
+</body>
+</html>
