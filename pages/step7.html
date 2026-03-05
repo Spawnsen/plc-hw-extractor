@@ -723,14 +723,9 @@
       `).join('');
     }
 
-    // ── Local escape helper (mirrors ui.js but available here too) ─
+    // ── Local escape helper (delegates to UI.escapeHtml) ──────────
     function _escapeHtml(str) {
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#x27;');
+      return UI.escapeHtml(str);
     }
 
   </script>

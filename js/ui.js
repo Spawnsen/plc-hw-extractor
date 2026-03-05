@@ -131,4 +131,5 @@ window.UI = {
   showNotification,
   showError,
   clearError,
+  escapeHtml: _escapeHtml,
 };

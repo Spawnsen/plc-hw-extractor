@@ -261,6 +261,16 @@ function _parseRack(lines) {
   return rack;
 }
 
+// ─── Slot type detection config ──────────────────────────────────────────────
+
+/** Maps article number regex patterns to slot type strings (first match wins). */
+const SLOT_TYPE_PATTERNS = [
+  { pattern: /^6ES7\s+407/i, type: 'PS'  },
+  { pattern: /^6ES7\s+4[01]\d/i, type: 'CPU' },
+  { pattern: /^6GK/i,            type: 'CP'  },
+  { pattern: /^6ES7/i,           type: 'SM'  },
+];
+
 /**
  * Detects the slot type from article number prefix.
  * @param {string|null} articleNumber
@@ -269,12 +279,8 @@ function _parseRack(lines) {
 function _detectSlotType(articleNumber) {
   if (!articleNumber) return 'unknown';
   const a = articleNumber.trim();
-  if (/^6ES7\s+407/i.test(a))          return 'PS';
-  if (/^6ES7\s+4[01]\d/i.test(a))      return 'CPU';
-  if (/^6GK/i.test(a))                 return 'CP';
-  if (/^6ES7\s+3/i.test(a))            return 'SM';
-  if (/^6ES7/i.test(a))                return 'SM';
-  return 'unknown';
+  const match = SLOT_TYPE_PATTERNS.find(({ pattern }) => pattern.test(a));
+  return match ? match.type : 'unknown';
 }
 
 // ─── DP Slaves ────────────────────────────────────────────────────────────────
