@@ -36,11 +36,11 @@ function parseStep7Cfg(text) {
 // ─── Meta ─────────────────────────────────────────────────────────────────────
 
 /**
- * Extracts file metadata from comment header lines.
- * STEP 7 .cfg files often start with comment lines like:
- *   ; Version: 3.2
- *   ; STEP7_Version: V5.7 + SP4
- *   ; Created: 01.01.2024
+ * Extracts file metadata from the header lines.
+ * STEP 7 .cfg files use the format:
+ *   FILEVERSION "3.2"
+ *   #STEP7_VERSION V5.7 + SP4
+ *   #CREATED "Donnerstag, 5. März 2026   19:43:17"
  *
  * @param {string[]} lines
  * @returns {Object}
@@ -54,16 +54,24 @@ function _parseMeta(lines) {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    // Stop once we hit a non-comment non-blank line
-    if (trimmed && !trimmed.startsWith(';')) break;
+    if (!trimmed) continue;
 
     let m;
-    if ((m = trimmed.match(/;\s*(?:File)?[Vv]ersion\s*[=:]\s*(.+)/))) {
-      meta.fileVersion = m[1].trim();
-    } else if ((m = trimmed.match(/;\s*STEP\s*7[_-]?[Vv]ersion\s*[=:]\s*(.+)/i))) {
+    // FILEVERSION "3.2"
+    if ((m = trimmed.match(/^FILEVERSION\s+"([^"]*)"/i))) {
+      meta.fileVersion = m[1];
+    }
+    // #STEP7_VERSION V5.7 + SP4
+    else if ((m = trimmed.match(/^#STEP7_VERSION\s+(.+)/i))) {
       meta.step7Version = m[1].trim();
-    } else if ((m = trimmed.match(/;\s*[Cc]reated\s*[=:]\s*(.+)/))) {
-      meta.created = m[1].trim();
+    }
+    // #CREATED "Donnerstag, 5. März 2026   19:43:17"
+    else if ((m = trimmed.match(/^#CREATED\s+"([^"]*)"/i))) {
+      meta.created = m[1];
+    }
+    // Stop at first real block keyword
+    else if (/^(STATION|SUBNET|RACK|DPSUBSYSTEM)\b/i.test(trimmed)) {
+      break;
     }
   }
 
@@ -168,93 +176,51 @@ function _parseSubnets(lines) {
 
 /**
  * Extracts the first RACK block.
+ * Handles both the rack base line and per-slot top-level entries:
+ *   RACK 0, "6ES7 400-1JA01-0AA0", "UR2"
+ *   RACK 0, SLOT 1, "6ES7 407-0KA01-0AA0", "PS 407 10A"
  * @param {string[]} lines
  * @returns {Object|null}
  */
 function _parseRack(lines) {
   let rack = null;
-  let inRack = false;
-  let depth = 0;
-  let currentSlot = null;
-  let inModule = false;
-  let moduleDepth = 0;
 
-  for (const line of lines) {
-    const trimmed = line.trim();
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
 
-    if (!inRack) {
-      // RACK <no> [, "<name>"]
-      const m = trimmed.match(/^RACK\s+(\d+)(?:\s*,\s*"([^"]*)")?/i);
-      if (m) {
-        rack = {
-          rackNo: parseInt(m[1], 10),
-          articleNumber: null,
-          name: m[2] || null,
-          slots: [],
-        };
-        inRack = true;
-        depth = 0;
-        continue;
-      }
-    }
-
-    if (!inRack || !rack) continue;
-
-    if (/^BEGIN\b/i.test(trimmed) && !inModule) {
-      depth++;
+    // Match rack base: RACK 0, "6ES7 400-1JA01-0AA0", "UR2"
+    // (no SLOT keyword, no SUBSLOT keyword)
+    const rackBaseMatch = trimmed.match(/^RACK\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i);
+    if (rackBaseMatch && !rack) {
+      rack = {
+        rackNo:        parseInt(rackBaseMatch[1], 10),
+        articleNumber: rackBaseMatch[2],
+        name:          rackBaseMatch[3],
+        slots:         [],
+      };
       continue;
     }
 
-    if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i) && !inModule) {
-      depth--;
-      if (depth <= 0) {
-        inRack = false;
-        continue;
+    // Match slot: RACK 0, SLOT 3, "6ES7 416-2XK02-0AB0", "CPU1_Main"
+    // Must NOT contain SUBSLOT
+    const slotMatch = trimmed.match(/^RACK\s+(\d+)\s*,\s*SLOT\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i);
+    if (slotMatch) {
+      if (!rack) {
+        rack = { rackNo: parseInt(slotMatch[1], 10), articleNumber: null, name: null, slots: [] };
       }
+      const articleNumber = slotMatch[3];
+      rack.slots.push({
+        slot:          parseInt(slotMatch[2], 10),
+        articleNumber: articleNumber,
+        name:          slotMatch[4],
+        type:          _detectSlotType(articleNumber),
+      });
       continue;
     }
 
-    // Inside rack block
-    let m;
-
-    // Rack-level keys
-    if (!inModule) {
-      if ((m = trimmed.match(/^ARTICLE_NUMBER\s+"([^"]*)"/i))) rack.articleNumber = m[1];
-      if ((m = trimmed.match(/^NAME\s+"([^"]*)"/i))) rack.name = rack.name || m[1];
-    }
-
-    // Module block inside rack: MODULE <slot> [, "<name>"]
-    if (!inModule) {
-      if ((m = trimmed.match(/^MODULE\s+(\d+)(?:\s*,\s*"([^"]*)")?/i))) {
-        currentSlot = {
-          slot: parseInt(m[1], 10),
-          articleNumber: null,
-          name: m[2] || null,
-          type: null,
-        };
-        inModule = true;
-        moduleDepth = 0;
-        continue;
-      }
-    }
-
-    if (inModule) {
-      if (/^BEGIN\b/i.test(trimmed)) { moduleDepth++; continue; }
-      if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
-        moduleDepth--;
-        if (moduleDepth <= 0) {
-          if (currentSlot) {
-            currentSlot.type = _detectSlotType(currentSlot.articleNumber);
-            rack.slots.push(currentSlot);
-            currentSlot = null;
-          }
-          inModule = false;
-        }
-        continue;
-      }
-
-      if ((m = trimmed.match(/^ARTICLE_NUMBER\s+"([^"]*)"/i))) currentSlot.articleNumber = m[1];
-      if ((m = trimmed.match(/^NAME\s+"([^"]*)"/i)))           currentSlot.name          = currentSlot.name || m[1];
+    // SUBSLOT lines — skip them (they are sub-interfaces, not physical slots)
+    if (/^RACK\s+\d+\s*,\s*SLOT\s+\d+\s*,\s*SUBSLOT\b/i.test(trimmed)) {
+      continue;
     }
   }
 
@@ -286,199 +252,182 @@ function _detectSlotType(articleNumber) {
 // ─── DP Slaves ────────────────────────────────────────────────────────────────
 
 /**
- * Extracts all DPSUBSYSTEM / DP slave blocks.
+ * Extracts all DP slave blocks and their slots from top-level DPSUBSYSTEM lines.
+ * Three line types are distinguished:
+ *   Mastersystem: DPSUBSYSTEM 1, "PROFIBUS HG1: DP-Mastersystem (1)"  — skipped
+ *   Slave header: DPSUBSYSTEM 1, DPADDRESS 3, "DP2V0550.GSD", "SS0001"
+ *   Slot header:  DPSUBSYSTEM 1, DPADDRESS 3, SLOT 0, "221-1BF00  DI8xDC24V", "8DE"
  * @param {string[]} lines
  * @returns {Array}
  */
 function _parseDpSlaves(lines) {
   const slaves = [];
+  const slaveMap = {}; // key: dpAddress -> slave object
 
-  // We'll do a two-pass: first find all slave blocks boundaries,
-  // then parse each one.
-  const slaveBlocks = _findSlaveBlocks(lines);
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
 
-  for (const block of slaveBlocks) {
-    const slave = _parseOneSlave(lines, block.start, block.end);
-    if (slave) slaves.push(slave);
+    // ── Slave header: DPSUBSYSTEM 1, DPADDRESS 3, "DP2V0550.GSD", "SS0001"
+    // Must have DPADDRESS but NOT SLOT
+    const slaveMatch = trimmed.match(
+      /^DPSUBSYSTEM\s+\d+\s*,\s*DPADDRESS\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
+    );
+    if (slaveMatch) {
+      const dpAddr  = parseInt(slaveMatch[1], 10);
+      const gsdFile = slaveMatch[2];
+      const name    = slaveMatch[3];
+      const slave = {
+        dpAddress: dpAddr,
+        gsdFile:   gsdFile,
+        name:      name,
+        assetId:   null,
+        slots:     [],
+      };
+      slaveMap[dpAddr] = slave;
+      slaves.push(slave);
+
+      // Read ASSET_ID from the BEGIN...END block following this header
+      i = _readSlaveProperties(lines, i + 1, slave);
+      continue;
+    }
+
+    // ── Slot header: DPSUBSYSTEM 1, DPADDRESS 3, SLOT 0, "221-1BF00  DI8xDC24V", "8DE"
+    const slotMatch = trimmed.match(
+      /^DPSUBSYSTEM\s+\d+\s*,\s*DPADDRESS\s+(\d+)\s*,\s*SLOT\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
+    );
+    if (slotMatch) {
+      const dpAddr     = parseInt(slotMatch[1], 10);
+      const slotNo     = parseInt(slotMatch[2], 10);
+      const moduleType = slotMatch[3];
+      const moduleName = slotMatch[4];
+
+      const slotObj = {
+        slot:        slotNo,
+        moduleType:  moduleType,
+        moduleName:  moduleName,
+        direction:   null,
+        byteAddress: null,
+        signals:     [],
+      };
+
+      // Read the BEGIN...END block for this slot
+      i = _readSlotBlock(lines, i + 1, slotObj);
+
+      // Attach to slave
+      if (slaveMap[dpAddr]) {
+        slaveMap[dpAddr].slots.push(slotObj);
+      }
+      continue;
+    }
   }
 
   return slaves;
 }
 
 /**
- * Finds the line index ranges of each DPSUBSYSTEM slave block.
+ * Reads properties (ASSET_ID etc.) from a BEGIN...END block.
+ * Returns the line index of the END line.
  * @param {string[]} lines
- * @returns {Array<{start:number, end:number}>}
+ * @param {number} startIdx
+ * @param {Object} slave
+ * @returns {number}
  */
-function _findSlaveBlocks(lines) {
-  const blocks = [];
-  let i = 0;
+function _readSlaveProperties(lines, startIdx, slave) {
+  let i = startIdx;
+  let inBlock = false;
 
-  while (i < lines.length) {
+  for (; i < lines.length; i++) {
     const trimmed = lines[i].trim();
 
-    // Look for DPSUBSYSTEM header
-    if (/^DPSUBSYSTEM\s+/i.test(trimmed)) {
-      const start = i;
-      let depth = 0;
-      let end = i;
-
-      // Walk forward to find the matching END
-      for (let j = i; j < lines.length; j++) {
-        const t = lines[j].trim();
-        if (/^BEGIN\b/i.test(t)) depth++;
-        if (/^END\b/i.test(t) && !t.match(/^END_/i)) {
-          depth--;
-          if (depth <= 0) {
-            end = j;
-            break;
-          }
-        }
-      }
-
-      blocks.push({ start, end });
-      i = end + 1;
-      continue;
+    if (/^BEGIN\b/i.test(trimmed)) { inBlock = true; continue; }
+    if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
+      return i;
     }
-    i++;
+
+    if (!inBlock) continue;
+
+    let m;
+    if ((m = trimmed.match(/^ASSET_ID\s+"([^"]*)"/i))) slave.assetId = m[1];
   }
 
-  return blocks;
+  return i;
 }
 
 /**
- * Parses one DPSUBSYSTEM slave block.
+ * Reads a slot BEGIN...END block, extracting signals and addresses.
+ * Returns the line index of the END line.
  * @param {string[]} lines
  * @param {number} startIdx
- * @param {number} endIdx
- * @returns {Object|null}
+ * @param {Object} slotObj
+ * @returns {number}
  */
-function _parseOneSlave(lines, startIdx, endIdx) {
-  const headerLine = lines[startIdx].trim();
-  // DPSUBSYSTEM <addr> [, "<name>"]  or with AUTOCREATED / MASTER flags on next lines
-  const headerMatch = headerLine.match(/^DPSUBSYSTEM\s+(\d+)(?:\s*,\s*"([^"]*)")?/i);
-  if (!headerMatch) return null;
-
-  const slave = {
-    dpAddress: parseInt(headerMatch[1], 10),
-    name:      headerMatch[2] || null,
-    gsdFile:   null,
-    assetId:   null,
-    slots:     [],
-  };
-
-  let currentSlotObj = null;
-  let inSlot = false;
-  let slotDepth = 0;
-  let pendingAddressType = null; // 'IN' | 'OUT'
+function _readSlotBlock(lines, startIdx, slotObj) {
+  let i = startIdx;
+  let inBlock = false;
+  let pendingAddressType = null;
   let inLocalAddresses = false;
 
-  for (let i = startIdx + 1; i <= endIdx; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
+  for (; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
 
-    // Skip pure structural keywords at the top level
-    if (/^BEGIN\b/i.test(trimmed) && !inSlot) continue;
-    if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i) && !inSlot) continue;
-
-    if (!inSlot) {
-      // Slave-level keys
-      let m;
-      if ((m = trimmed.match(/^NAME\s+"([^"]*)"/i)))        slave.name    = slave.name || m[1];
-      if ((m = trimmed.match(/^ASSET_ID\s+"([^"]*)"/i)))    slave.assetId = m[1];
-      if ((m = trimmed.match(/^GSD_FILE\s+"([^"]*)"/i)))    slave.gsdFile = m[1];
-
-      // SLOTCONFIG or DP_SLOT block: DPSUBSYSTEM_SLOT <no> [, "<name>"]
-      if ((m = trimmed.match(/^(?:DPSUBSYSTEM_)?SLOT\s+(\d+)(?:\s*,\s*"([^"]*)")?/i))) {
-        currentSlotObj = {
-          slot:        parseInt(m[1], 10),
-          moduleType:  null,
-          moduleName:  m[2] || null,
-          direction:   null,
-          byteAddress: null,
-          signals:     [],
-        };
-        inSlot = true;
-        slotDepth = 0;
-        continue;
-      }
+    if (/^BEGIN\b/i.test(trimmed)) { inBlock = true; continue; }
+    if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
+      return i;
     }
 
-    if (inSlot && currentSlotObj) {
-      if (/^BEGIN\b/i.test(trimmed)) { slotDepth++; continue; }
-      if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
-        slotDepth--;
-        if (slotDepth <= 0) {
-          slave.slots.push(currentSlotObj);
-          currentSlotObj = null;
-          inSlot = false;
-          inLocalAddresses = false;
-          pendingAddressType = null;
-        }
-        continue;
+    if (!inBlock) continue;
+
+    let m;
+
+    // LOCAL_IN_ADDRESSES / LOCAL_OUT_ADDRESSES
+    if (/^LOCAL_IN_ADDRESSES\b/i.test(trimmed)) {
+      pendingAddressType = 'IN';
+      inLocalAddresses = true;
+      continue;
+    }
+    if (/^LOCAL_OUT_ADDRESSES\b/i.test(trimmed)) {
+      pendingAddressType = 'OUT';
+      inLocalAddresses = true;
+      continue;
+    }
+
+    // ADDRESS line inside LOCAL_*_ADDRESSES:
+    // ADDRESS  0, 0, 1, 0, 2, 0  → first number is byte address
+    if (inLocalAddresses && (m = trimmed.match(/^ADDRESS\s+(\d+)/i))) {
+      if (slotObj.byteAddress === null) {
+        slotObj.byteAddress = parseInt(m[1], 10);
+        slotObj.direction   = pendingAddressType;
+      }
+      inLocalAddresses = false;
+      continue;
+    }
+    if (inLocalAddresses && trimmed && !/^\d/.test(trimmed)) {
+      inLocalAddresses = false;
+    }
+
+    // SYMBOL  I , 0, "SS0001_24V_iO", ""
+    // SYMBOL  O , 0, "Freig_an_RBG11", ""
+    if ((m = trimmed.match(/^SYMBOL\s+(I|O)\s*,\s*(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"/i))) {
+      const sigType    = m[1].toUpperCase();
+      const bitNo      = parseInt(m[2], 10);
+      const sigName    = m[3];
+      const sigComment = m[4];
+
+      if (!slotObj.direction) {
+        slotObj.direction = sigType === 'I' ? 'IN' : 'OUT';
       }
 
-      let m;
-      if ((m = trimmed.match(/^MODULE_TYPE\s+"([^"]*)"/i))) currentSlotObj.moduleType = m[1];
-      if ((m = trimmed.match(/^NAME\s+"([^"]*)"/i)))        currentSlotObj.moduleName = currentSlotObj.moduleName || m[1];
-
-      // Signal lines: SYMBOL I , <byte> , "<name>" , "<comment>"
-      // or:           SYMBOL O , <byte> , "<name>" , "<comment>"
-      if ((m = trimmed.match(/^SYMBOL\s+(I|O)\s*,\s*(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"/i))) {
-        const sigType    = m[1].toUpperCase();
-        const byteAddr   = parseInt(m[2], 10);
-        const sigName    = m[3];
-        const sigComment = m[4];
-
-        // Signals inside SYMBOL blocks sometimes have an explicit bit field next
-        // but the basic format only gives byte. We'll treat bit as index within slot.
-        const bitIndex = currentSlotObj.signals.filter(s => s.type === sigType).length;
-
-        if (!currentSlotObj.direction) {
-          currentSlotObj.direction = sigType === 'I' ? 'IN' : 'OUT';
-          currentSlotObj.byteAddress = byteAddr;
-        }
-
-        currentSlotObj.signals.push({
-          bit:     bitIndex,
-          type:    sigType,
-          name:    sigName,
-          comment: sigComment,
-        });
-        continue;
-      }
-
-      // LOCAL_IN_ADDRESSES / LOCAL_OUT_ADDRESSES block
-      if (/^LOCAL_IN_ADDRESSES\b/i.test(trimmed)) {
-        pendingAddressType = 'IN';
-        inLocalAddresses = true;
-        continue;
-      }
-      if (/^LOCAL_OUT_ADDRESSES\b/i.test(trimmed)) {
-        pendingAddressType = 'OUT';
-        inLocalAddresses = true;
-        continue;
-      }
-
-      if (inLocalAddresses) {
-        // ADDRESS <byteAddr> <something>
-        if ((m = trimmed.match(/^ADDRESS\s+(\d+)/i))) {
-          if (currentSlotObj.byteAddress === null) {
-            currentSlotObj.byteAddress = parseInt(m[1], 10);
-            currentSlotObj.direction   = pendingAddressType;
-          }
-          inLocalAddresses = false;
-          continue;
-        }
-        // If another keyword appears, we left the addresses block
-        if (trimmed && !/^\d/.test(trimmed)) {
-          inLocalAddresses = false;
-        }
-      }
+      slotObj.signals.push({
+        bit:     bitNo,
+        type:    sigType,
+        name:    sigName,
+        comment: sigComment,
+      });
+      continue;
     }
   }
 
-  return slave;
+  return i;
 }
 
 // ─── Signal List ─────────────────────────────────────────────────────────────
