@@ -95,9 +95,6 @@ From a STEP 7 `.cfg` file, the parser extracts:
 ## 🗺️ Planned Future Features
 
 - [ ] TIA Portal project file support
-- [ ] Signal cross-reference view
-- [ ] Hardware comparison between two configuration files
-- [ ] Offline PWA support
 
 ---
 
