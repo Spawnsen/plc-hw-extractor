@@ -304,6 +304,50 @@
 
   <!-- ── Toast Container (dynamically added by ui.js) ─────────── -->
 
+  <!-- ── Export Modal ──────────────────────────────────────────── -->
+  <div id="export-modal-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="export-modal-title">Export</h3>
+        <button id="export-modal-close" class="modal-close" aria-label="Schließen">
+          <i data-lucide="x" style="width:18px;height:18px;"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="section-label">Sektionen auswählen</p>
+        <div class="export-sections">
+          <label><input type="checkbox" class="export-section-cb" value="station"   checked /> Station Info</label>
+          <label><input type="checkbox" class="export-section-cb" value="networks"  checked /> Netzwerke</label>
+          <label><input type="checkbox" class="export-section-cb" value="rack"      checked /> Rack-Konfiguration</label>
+          <label><input type="checkbox" class="export-section-cb" value="slaves"    checked /> DP-Slaves</label>
+          <label><input type="checkbox" class="export-section-cb" value="signals"   checked /> I/O Signale</label>
+          <label><input type="checkbox" class="export-section-cb" value="inventory" checked /> Inventarliste (Summenstückliste)</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <p class="section-label">Format wählen</p>
+        <div class="export-format-buttons">
+          <button class="btn btn-secondary" data-export-format="json">
+            <span class="btn-icon">📄</span>
+            JSON
+          </button>
+          <button class="btn btn-secondary" data-export-format="csv">
+            <span class="btn-icon">📊</span>
+            CSV
+          </button>
+          <button class="btn btn-secondary" data-export-format="excel">
+            <span class="btn-icon">📗</span>
+            Excel
+          </button>
+          <button class="btn btn-secondary" data-export-format="pdf">
+            <span class="btn-icon">🖨️</span>
+            PDF / Drucken
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Scripts ─────────────────────────────────────────────────── -->
   <script src="../js/ui.js"></script>
   <script src="../js/step7-parser.js"></script>
@@ -787,50 +831,6 @@
     }
 
   </script>
-
-  <!-- ── Export Modal ──────────────────────────────────────────── -->
-  <div id="export-modal-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
-    <div class="modal">
-      <div class="modal-header">
-        <h3 id="export-modal-title">Export</h3>
-        <button id="export-modal-close" class="modal-close" aria-label="Schließen">
-          <i data-lucide="x" style="width:18px;height:18px;"></i>
-        </button>
-      </div>
-      <div class="modal-body">
-        <p class="section-label">Sektionen auswählen</p>
-        <div class="export-sections">
-          <label><input type="checkbox" class="export-section-cb" value="station"   checked /> Station Info</label>
-          <label><input type="checkbox" class="export-section-cb" value="networks"  checked /> Netzwerke</label>
-          <label><input type="checkbox" class="export-section-cb" value="rack"      checked /> Rack-Konfiguration</label>
-          <label><input type="checkbox" class="export-section-cb" value="slaves"    checked /> DP-Slaves</label>
-          <label><input type="checkbox" class="export-section-cb" value="signals"   checked /> I/O Signale</label>
-          <label><input type="checkbox" class="export-section-cb" value="inventory" checked /> Inventarliste (Summenstückliste)</label>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <p class="section-label">Format wählen</p>
-        <div class="export-format-buttons">
-          <button class="btn btn-secondary" data-export-format="json">
-            <span class="btn-icon">📄</span>
-            JSON
-          </button>
-          <button class="btn btn-secondary" data-export-format="csv">
-            <span class="btn-icon">📊</span>
-            CSV
-          </button>
-          <button class="btn btn-secondary" data-export-format="excel">
-            <span class="btn-icon">📗</span>
-            Excel
-          </button>
-          <button class="btn btn-secondary" data-export-format="pdf">
-            <span class="btn-icon">🖨️</span>
-            PDF / Drucken
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
 
 </body>
 </html>
