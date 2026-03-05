@@ -14,6 +14,9 @@
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 
+  <!-- SheetJS (Excel export) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
   <!-- Styles -->
   <link rel="stylesheet" href="../css/style.css" />
   <link rel="stylesheet" href="../css/step7.css" />
@@ -136,9 +139,9 @@
                 <i data-lucide="rotate-ccw" style="width:16px;height:16px;"></i>
                 Neuen Export starten
               </button>
-              <button id="btn-export-json" class="btn btn-success">
+              <button id="btn-export" class="btn btn-success">
                 <i data-lucide="download" style="width:16px;height:16px;"></i>
-                JSON exportieren
+                Export
               </button>
             </div>
           </div>
@@ -301,6 +304,50 @@
 
   <!-- ── Toast Container (dynamically added by ui.js) ─────────── -->
 
+  <!-- ── Export Modal ──────────────────────────────────────────── -->
+  <div id="export-modal-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="export-modal-title">Export</h3>
+        <button id="export-modal-close" class="modal-close" aria-label="Schließen">
+          <i data-lucide="x" style="width:18px;height:18px;"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="section-label">Sektionen auswählen</p>
+        <div class="export-sections">
+          <label><input type="checkbox" class="export-section-cb" value="station"   checked /> Station Info</label>
+          <label><input type="checkbox" class="export-section-cb" value="networks"  checked /> Netzwerke</label>
+          <label><input type="checkbox" class="export-section-cb" value="rack"      checked /> Rack-Konfiguration</label>
+          <label><input type="checkbox" class="export-section-cb" value="slaves"    checked /> DP-Slaves</label>
+          <label><input type="checkbox" class="export-section-cb" value="signals"   checked /> I/O Signale</label>
+          <label><input type="checkbox" class="export-section-cb" value="inventory" checked /> Inventarliste (Summenstückliste)</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <p class="section-label">Format wählen</p>
+        <div class="export-format-buttons">
+          <button class="btn btn-secondary" data-export-format="json">
+            <span class="btn-icon">📄</span>
+            JSON
+          </button>
+          <button class="btn btn-secondary" data-export-format="csv">
+            <span class="btn-icon">📊</span>
+            CSV
+          </button>
+          <button class="btn btn-secondary" data-export-format="excel">
+            <span class="btn-icon">📗</span>
+            Excel
+          </button>
+          <button class="btn btn-secondary" data-export-format="pdf">
+            <span class="btn-icon">🖨️</span>
+            PDF / Drucken
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Scripts ─────────────────────────────────────────────────── -->
   <script src="../js/ui.js"></script>
   <script src="../js/step7-parser.js"></script>
@@ -325,7 +372,9 @@
     const selectedFileName  = document.getElementById('selected-file-name');
     const processingFilename = document.getElementById('processing-filename');
     const btnNewExport      = document.getElementById('btn-new-export');
-    const btnExportJson     = document.getElementById('btn-export-json');
+    const btnExport         = document.getElementById('btn-export');
+    const exportModalOverlay = document.getElementById('export-modal-overlay');
+    const exportModalClose  = document.getElementById('export-modal-close');
     const signalSearch      = document.getElementById('signal-search');
     const signalTypeFilter  = document.getElementById('signal-type-filter');
     const signalFilterCount = document.getElementById('signal-filter-count');
@@ -472,11 +521,64 @@
       UI.showState('upload');
     });
 
-    // ── JSON Export ────────────────────────────────────────────────
-    btnExportJson.addEventListener('click', () => {
+    // ── Export Modal ────────────────────────────────────────────────
+    function openExportModal() {
+      exportModalOverlay.classList.add('open');
+      lucide.createIcons();
+    }
+
+    function closeExportModal() {
+      exportModalOverlay.classList.remove('open');
+    }
+
+    function getSelectedSections() {
+      return Array.from(document.querySelectorAll('.export-section-cb:checked'))
+        .map(cb => cb.value);
+    }
+
+    btnExport.addEventListener('click', () => {
       if (!parsedData) return;
-      Exporter.exportAsJson(parsedData);
-      UI.showNotification('JSON-Datei wird heruntergeladen…', 'success');
+      openExportModal();
+    });
+
+    exportModalClose.addEventListener('click', closeExportModal);
+
+    exportModalOverlay.addEventListener('click', e => {
+      if (e.target === exportModalOverlay) closeExportModal();
+    });
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && exportModalOverlay.classList.contains('open')) {
+        closeExportModal();
+      }
+    });
+
+    document.querySelectorAll('[data-export-format]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!parsedData) return;
+        const format   = btn.dataset.exportFormat;
+        const sections = getSelectedSections();
+        closeExportModal();
+        switch (format) {
+          case 'json':
+            Exporter.exportAsJson(parsedData, sections);
+            UI.showNotification('JSON-Datei wird heruntergeladen…', 'success');
+            break;
+          case 'csv':
+            Exporter.exportAsCsv(parsedData, sections);
+            UI.showNotification('CSV-Datei wird heruntergeladen…', 'success');
+            break;
+          case 'excel':
+            Exporter.exportAsExcel(parsedData, sections);
+            if (typeof XLSX !== 'undefined') {
+              UI.showNotification('Excel-Datei wird heruntergeladen…', 'success');
+            }
+            break;
+          case 'pdf':
+            Exporter.exportAsPdf(parsedData, sections);
+            break;
+        }
+      });
     });
 
     // ── Signal Filtering ───────────────────────────────────────────
@@ -729,5 +831,6 @@
     }
 
   </script>
+
 </body>
 </html>
