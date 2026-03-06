@@ -476,6 +476,165 @@ describe('Profinet — single-string device variant (no GSDML)', () => {
 
 
 
+
+// ── HG14 real-world format: firmware token in device header ──────────────────
+
+const PN_FIRMWARE_TOKEN_DEVICE_SNIPPET = `
+IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 50, "6ES7 155-6AU01-0BN0" "V4.1", "LS0110"
+BEGIN
+  NAME "LS0110_Station"
+  ASSET_ID "8E78EC688206454584B5627A3E8C221B"
+END
+`;
+
+describe('Profinet — device header with firmware token between article and name', () => {
+  let data;
+  try {
+    data = parseStep7Cfg(PN_FIRMWARE_TOKEN_DEVICE_SNIPPET);
+    assert(true, 'parser does not crash on firmware-token device header');
+  } catch (e) {
+    assert(false, `parser threw: ${e.message}`);
+    return;
+  }
+  assertEqual(data.profinet.devices.length, 1, 'one device found');
+  const dev = data.profinet.devices[0];
+  assertEqual(dev.ioAddress, 50,                            'ioAddress = 50');
+  assertEqual(dev.gsdml,     '6ES7 155-6AU01-0BN0',        'article number captured as gsdml');
+  assertEqual(dev.name,      'LS0110_Station',              'name overridden by NAME block');
+  assertEqual(dev.assetId,   '8E78EC688206454584B5627A3E8C221B', 'assetId extracted');
+});
+
+// ── HG14 real-world format: SLOT 0 with AUTOCREATED and IP/MAC fields ────────
+
+const PN_SLOT0_IP_MAC_SNIPPET = `
+IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 50, "6ES7 155-6AU01-0BN0" "V4.1", "LS0110"
+BEGIN
+  ASSET_ID "8E78EC688206454584B5627A3E8C221B"
+END
+IOSUBSYSTEM 100, IOADDRESS 50, SLOT 0, "6ES7 155-6AU01-0BN0", "LS0110"
+AUTOCREATED
+BEGIN
+  ASSET_ID "5AFB793D5089435FA572DF461021385D"
+  MACADDRESS "080006010000"
+  IPACTIVE "1"
+  IPADDRESS "C0A80032"
+  SUBNETMASK "FFFFFF00"
+  ROUTERADDRESS "C0A800C9"
+LOCAL_IN_ADDRESSES
+  ADDRESS  16244, 0, 0, 0, 0, 0
+PARAMETER
+  Option_Handling, "0"
+END
+`;
+
+describe('Profinet — SLOT 0 with AUTOCREATED keyword, IP/MAC and bare LOCAL_IN_ADDRESSES', () => {
+  let data;
+  try {
+    data = parseStep7Cfg(PN_SLOT0_IP_MAC_SNIPPET);
+    assert(true, 'parser does not crash on SLOT 0 with AUTOCREATED');
+  } catch (e) {
+    assert(false, `parser threw: ${e.message}`);
+    return;
+  }
+  assertEqual(data.profinet.devices.length, 1, 'one device found');
+  const dev = data.profinet.devices[0];
+  assertEqual(dev.ioAddress, 50,               'ioAddress = 50');
+  assertEqual(dev.slots.length, 1,             'SLOT 0 attached');
+  assertEqual(dev.modulesCount, 1,             'modulesCount = 1');
+
+  // Network fields propagated from SLOT 0 to parent device
+  assertEqual(dev.ip,         '192.168.0.50',  'ip propagated from SLOT 0');
+  assertEqual(dev.mac,        '080006010000',  'mac propagated from SLOT 0');
+  assertEqual(dev.subnetMask, '255.255.255.0', 'subnetMask propagated from SLOT 0');
+  assertEqual(dev.router,     '192.168.0.201', 'router propagated from SLOT 0');
+
+  const slot0 = dev.slots[0];
+  assertEqual(slot0.slot,      0,             'slot number = 0');
+  assertEqual(slot0.ip,        '192.168.0.50', 'ip in slot object');
+  assertEqual(slot0.mac,       '080006010000', 'mac in slot object');
+});
+
+// ── HG14 real-world format: I/O slot with bare LOCAL_IN_ADDRESSES + SYMBOL + PARAMETER ──
+
+const PN_IO_SLOT_BARE_ADDR_SNIPPET = `
+IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 50, "6ES7 155-6AU01-0BN0" "V4.1", "LS0110"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 50, SLOT 1, "6ES7 131-6BH01-0BA0", "DI16 x 24VDC ST V0.0"
+BEGIN
+LOCAL_IN_ADDRESSES
+  ADDRESS  155, 0, 2, 0, 16, 0
+SYMBOL  I , 0, "EG1_Hilfsschuetz_RM", "Hilfsschütz EG1"
+SYMBOL  I , 1, "EG1_Quit", "Quittierung"
+PARAMETER
+  DIAGNOSTICS_WIRE_BREAK, "0"
+END
+`;
+
+describe('Profinet — I/O slot with bare LOCAL_IN_ADDRESSES, SYMBOL lines, and PARAMETER section', () => {
+  let data;
+  try {
+    data = parseStep7Cfg(PN_IO_SLOT_BARE_ADDR_SNIPPET);
+    assert(true, 'parser does not crash on bare LOCAL_IN_ADDRESSES with PARAMETER');
+  } catch (e) {
+    assert(false, `parser threw: ${e.message}`);
+    return;
+  }
+  assertEqual(data.profinet.devices.length, 1, 'one device found');
+  const dev = data.profinet.devices[0];
+  assertEqual(dev.slots.length, 1, 'one slot attached');
+
+  const slot = dev.slots[0];
+  assertEqual(slot.slot,        1,     'slot number = 1');
+  assertEqual(slot.byteAddress, 155,   'byteAddress from bare LOCAL_IN_ADDRESSES');
+  assertEqual(slot.direction,   'IN',  'direction = IN');
+  assertEqual(slot.signals.length, 2,  'two signals parsed');
+  assertEqual(slot.signals[0].name,    'EG1_Hilfsschuetz_RM', 'first signal name');
+  assertEqual(slot.signals[0].comment, 'Hilfsschütz EG1',     'first signal comment');
+  assertEqual(slot.signals[0].type,    'I',                   'first signal type');
+  assertEqual(slot.signals[1].name,    'EG1_Quit',            'second signal name');
+  assertEqual(slot.signals[1].bit,     1,                     'second signal bit = 1');
+
+  // Signals also in dev.signals
+  assertEqual(dev.signals.length, 2, 'two signals in dev.signals');
+});
+
+// ── HG14 real-world: IP not overwritten by SLOT 0 when device block already has IP ──
+
+const PN_SLOT0_NO_OVERWRITE_SNIPPET = `
+IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 20, "GSDML.xml", "dev"
+BEGIN
+  IPADDRESS "C0A80014"
+  MACADDRESS "001A2B3C4D5E"
+END
+IOSUBSYSTEM 100, IOADDRESS 20, SLOT 0, "6ES7 100-0BA00-0XB0", "Interface"
+BEGIN
+  IPADDRESS "AABBCCDD"
+  MACADDRESS "FFEEDDCCBBAA"
+END
+`;
+
+describe('Profinet — SLOT 0 network fields do NOT overwrite already-set device fields', () => {
+  const data = parseStep7Cfg(PN_SLOT0_NO_OVERWRITE_SNIPPET);
+  const dev = data.profinet.devices[0];
+  // Device block already set ip and mac; SLOT 0 must not overwrite them
+  assertEqual(dev.ip,  '192.168.0.20',   'ip stays from device block, not overwritten by SLOT 0');
+  assertEqual(dev.mac, '001A2B3C4D5E',   'mac stays from device block, not overwritten by SLOT 0');
+});
+
+
 console.log(`\n──────────────────────────────────`);
 console.log(`Results: ${passed} passed, ${failed} failed`);
 
