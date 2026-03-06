@@ -137,6 +137,23 @@ function buildInventory(data) {
     }
   }
 
+  // PROFINET IO devices
+  for (const dev of (data.pnDevices || [])) {
+    const key = dev.mlfb || dev.name;
+    if (!key) continue;
+    const existing = map.get(key);
+    if (existing) {
+      existing.count++;
+    } else {
+      map.set(key, {
+        articleNumber: dev.mlfb || '–',
+        name:          dev.name || '–',
+        type:          'PN-Device',
+        count:         1,
+      });
+    }
+  }
+
   return Array.from(map.values())
     .sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
 }
@@ -151,12 +168,13 @@ function buildInventory(data) {
  */
 function _filteredData(data, sections) {
   const result = {};
-  if (sections.includes('station'))   result.station   = data.station;
-  if (sections.includes('networks'))  result.subnets   = data.subnets;
-  if (sections.includes('rack'))      result.rack      = data.rack;
-  if (sections.includes('slaves'))    result.dpSlaves  = data.dpSlaves;
-  if (sections.includes('signals'))   result.signals   = data.signals;
-  if (sections.includes('inventory')) result.inventory = buildInventory(data);
+  if (sections.includes('station'))    result.station   = data.station;
+  if (sections.includes('networks'))   result.subnets   = data.subnets;
+  if (sections.includes('rack'))       result.rack      = data.rack;
+  if (sections.includes('slaves'))     result.dpSlaves  = data.dpSlaves;
+  if (sections.includes('pndevices'))  result.pnDevices = data.pnDevices;
+  if (sections.includes('signals'))    result.signals   = data.signals;
+  if (sections.includes('inventory'))  result.inventory = buildInventory(data);
   return result;
 }
 
@@ -194,7 +212,7 @@ function exportAsCsv(data, sections) {
     return;
   }
 
-  const activeSections = sections && sections.length ? sections : ['station', 'networks', 'rack', 'slaves', 'signals', 'inventory'];
+  const activeSections = sections && sections.length ? sections : ['station', 'networks', 'rack', 'slaves', 'pndevices', 'signals', 'inventory'];
   const blocks = [];
 
   // Station Info
@@ -223,9 +241,9 @@ function exportAsCsv(data, sections) {
 
   // Rack-Konfiguration
   if (activeSections.includes('rack') && data.rack && data.rack.slots && data.rack.slots.length) {
-    const rows = ['=== Rack-Konfiguration ===', _csvRow(['Slot', 'Bestellnummer', 'Name', 'Typ'])];
+    const rows = ['=== Rack-Konfiguration ===', _csvRow(['Slot', 'Bestellnummer', 'Name', 'Typ', 'Firmware'])];
     for (const slot of data.rack.slots) {
-      rows.push(_csvRow([slot.slot, slot.articleNumber || '', slot.name || '', slot.type || '']));
+      rows.push(_csvRow([slot.slot, slot.articleNumber || '', slot.name || '', slot.type || '', slot.firmware || '']));
     }
     blocks.push(rows.join('\n'));
   }
@@ -241,6 +259,15 @@ function exportAsCsv(data, sections) {
           rows.push(_csvRow([slave.dpAddress, slave.gsdFile || '', slave.name || '', slot.slot, slot.moduleType || '', slot.direction || '', slot.byteAddress != null ? slot.byteAddress : '']));
         }
       }
+    }
+    blocks.push(rows.join('\n'));
+  }
+
+  // PROFINET IO Devices
+  if (activeSections.includes('pndevices') && data.pnDevices && data.pnDevices.length) {
+    const rows = ['=== PROFINET IO-Geräte ===', _csvRow(['MLFB', 'Name', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Asset-ID', 'GSDML'])];
+    for (const dev of data.pnDevices) {
+      rows.push(_csvRow([dev.mlfb || '', dev.name || '', dev.ip || dev.ipHex || '', dev.subnetMask || dev.subnetMaskHex || '', dev.mac || '', dev.assetId || '', dev.gsdml || '']));
     }
     blocks.push(rows.join('\n'));
   }
@@ -302,7 +329,7 @@ function exportAsExcel(data, sections) {
     return;
   }
 
-  const activeSections = sections && sections.length ? sections : ['station', 'networks', 'rack', 'slaves', 'signals', 'inventory'];
+  const activeSections = sections && sections.length ? sections : ['station', 'networks', 'rack', 'slaves', 'pndevices', 'signals', 'inventory'];
   const wb = XLSX.utils.book_new();
 
   // Station Info
@@ -331,9 +358,9 @@ function exportAsExcel(data, sections) {
 
   // Rack
   if (activeSections.includes('rack') && data.rack) {
-    const aoa = [['Slot', 'Bestellnummer', 'Name', 'Typ']];
+    const aoa = [['Slot', 'Bestellnummer', 'Name', 'Typ', 'Firmware']];
     for (const slot of (data.rack.slots || [])) {
-      aoa.push([slot.slot, slot.articleNumber || '', slot.name || '', slot.type || '']);
+      aoa.push([slot.slot, slot.articleNumber || '', slot.name || '', slot.type || '', slot.firmware || '']);
     }
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Rack');
   }
@@ -351,6 +378,15 @@ function exportAsExcel(data, sections) {
       }
     }
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'DP-Slaves');
+  }
+
+  // PROFINET IO Devices
+  if (activeSections.includes('pndevices') && data.pnDevices && data.pnDevices.length) {
+    const aoa = [['MLFB', 'Name', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Asset-ID', 'GSDML']];
+    for (const dev of data.pnDevices) {
+      aoa.push([dev.mlfb || '', dev.name || '', dev.ip || dev.ipHex || '', dev.subnetMask || dev.subnetMaskHex || '', dev.mac || '', dev.assetId || '', dev.gsdml || '']);
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'PROFINET IO');
   }
 
   // IO-Signale
@@ -400,7 +436,7 @@ function exportAsPdf(data, sections) {
     return;
   }
 
-  const activeSections = sections && sections.length ? sections : ['station', 'networks', 'rack', 'slaves', 'signals', 'inventory'];
+  const activeSections = sections && sections.length ? sections : ['station', 'networks', 'rack', 'slaves', 'pndevices', 'signals', 'inventory'];
   const stationName    = (data.station && data.station.name) || 'Unbekannte Station';
   const dateLabel      = _dateStr();
 
@@ -444,8 +480,8 @@ function exportAsPdf(data, sections) {
 
   // Rack
   if (activeSections.includes('rack') && data.rack && data.rack.slots && data.rack.slots.length) {
-    const rows = data.rack.slots.map(s => [s.slot, s.articleNumber || '', s.name || '', s.type || '']);
-    sectionHtml.push(`<section><h2>Rack-Konfiguration</h2>${_htmlTable(['Slot', 'Bestellnummer', 'Name', 'Typ'], rows)}</section>`);
+    const rows = data.rack.slots.map(s => [s.slot, s.articleNumber || '', s.name || '', s.type || '', s.firmware || '']);
+    sectionHtml.push(`<section><h2>Rack-Konfiguration</h2>${_htmlTable(['Slot', 'Bestellnummer', 'Name', 'Typ', 'Firmware'], rows)}</section>`);
   }
 
   // DP-Slaves
@@ -461,6 +497,12 @@ function exportAsPdf(data, sections) {
       }
     }
     sectionHtml.push(`<section><h2>DP-Slaves</h2>${_htmlTable(['DP-Adresse', 'GSD-Datei', 'Slave-Name', 'Slot', 'Modul', 'Richtung', 'Byte-Adresse'], rows)}</section>`);
+  }
+
+  // PROFINET IO Devices
+  if (activeSections.includes('pndevices') && data.pnDevices && data.pnDevices.length) {
+    const rows = data.pnDevices.map(dev => [dev.mlfb || '', dev.name || '', dev.ip || dev.ipHex || '', dev.subnetMask || dev.subnetMaskHex || '', dev.mac || '', dev.assetId || '', dev.gsdml || '']);
+    sectionHtml.push(`<section><h2>PROFINET IO-Geräte</h2>${_htmlTable(['MLFB', 'Name', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Asset-ID', 'GSDML'], rows)}</section>`);
   }
 
   // I/O Signale

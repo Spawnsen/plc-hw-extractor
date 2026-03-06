@@ -18,7 +18,7 @@ If this tool saves you time, consider buying me a coffee!
 ## ✨ Features
 
 - 🔍 Parse Siemens STEP 7 `.cfg` hardware configuration files
-- 📊 Display rack layout, PROFIBUS DP slaves, and all I/O signals
+- 📊 Display rack layout, PROFIBUS DP slaves, PROFINET IO devices, and all I/O signals
 - 🔎 Filter signals by type (Input/Output) or search by slave name / symbol
 - 📦 Export parsed data in multiple formats:
   - 💾 **JSON** — structured, pretty-printed
@@ -85,8 +85,17 @@ From a STEP 7 `.cfg` file, the parser extracts:
 - **File Metadata** — file version, STEP 7 version, creation date
 - **Station** — station type, name, asset ID
 - **Subnets** — PROFIBUS and Industrial Ethernet networks with NET_ID and baudrate
-- **Rack** — rack number, article number, and all module slots (with type detection: CPU / PS / CP / SM)
+- **Rack** — rack number, article number, and all module slots (with type detection: CPU / PS / CP / SM); optional `firmware` field when a version token is present in the slot header
 - **DP Slaves** — PROFIBUS DP slaves with address, GSD file, and their I/O module slots
+- **PROFINET IO Devices (`pnDevices`)** — PROFINET IO participants from `IOSUBSYSTEM` blocks, including:
+  - `ioSubsystemId`, `ioAddress`, `slot`, `gsdml`, `name`
+  - `assetId`, `mlfb`
+  - `mac` (MAC address)
+  - `ipHex` / `ip` (IP address as hex bytes and dotted IPv4)
+  - `subnetMaskHex` / `subnetMask` (subnet mask as hex bytes and dotted IPv4)
+  - `routerHex` / `router` (router/gateway address)
+  - `pnSwRelease`, `pnHwRelease`, `pnMinVersion` (firmware/version info, if present)
+  - `localInAddress` (first local input address, if present)
 - **I/O Signals** — flat list of all signals with byte address, bit, symbol name, and comment
 - **Inventory (BOM)** — summarised list of all devices with article numbers and quantities
 
