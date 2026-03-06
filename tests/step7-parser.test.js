@@ -440,7 +440,41 @@ describe('DP signals — dpSubsystem propagated to signal list (Bug 3)', () => {
   assertEqual(sig2.dpSubsystem, 2, 'signal 2 dpSubsystem = 2');
 });
 
-// ── Summary ────────────────────────────────────────────────────────────────
+// ── Single-string device variant ──────────────────────────────────────────
+
+const PN_SINGLE_STRING_SNIPPET = `
+IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 20, "kf5075"
+BEGIN
+  NAME "kf5075_Station"
+  IPADDRESS "C0A80014"
+  SUBNETMASK "FFFFFF00"
+END
+IOSUBSYSTEM 100, IOADDRESS 21, "et200sp"
+BEGIN
+END
+`;
+
+describe('Profinet — single-string device variant (no GSDML)', () => {
+  const data = parseStep7Cfg(PN_SINGLE_STRING_SNIPPET);
+  assertEqual(data.profinet.devices.length, 2, 'two devices parsed from single-string headers');
+
+  const dev = data.profinet.devices[0];
+  assertEqual(dev.ioAddress, 20,          'first device ioAddress = 20');
+  assertEqual(dev.name,      'kf5075_Station', 'name overridden by NAME block');
+  assertEqual(dev.gsdml,     '',          'gsdml is empty string for single-string variant');
+  assertEqual(dev.ip,        '192.168.0.20', 'ip from quoted hex');
+  assertEqual(dev.subnetMask, '255.255.255.0', 'subnetMask from quoted hex');
+
+  const dev2 = data.profinet.devices[1];
+  assertEqual(dev2.ioAddress, 21,   'second device ioAddress = 21');
+  assertEqual(dev2.name,      'et200sp', 'second device name from header (no NAME block override)');
+  assertEqual(dev2.gsdml,     '',   'gsdml is empty for single-string variant');
+});
+
+
 
 console.log(`\n──────────────────────────────────`);
 console.log(`Results: ${passed} passed, ${failed} failed`);

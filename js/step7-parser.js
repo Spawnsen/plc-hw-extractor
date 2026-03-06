@@ -520,6 +520,7 @@ function _parsePnDevices(_lines) {
  * Recognized header variants:
  *   System:  IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
  *   Device:  IOSUBSYSTEM 100, IOADDRESS 20, "GSDML-...", "kf5075"
+ *   Device (single-string): IOSUBSYSTEM 100, IOADDRESS 20, "kf5075"
  *   Slot:    IOSUBSYSTEM 100, IOADDRESS 20, SLOT 5, "module", "name"
  *   Slot bare: IOSUBSYSTEM 100, IOADDRESS 20, SLOT 0
  *   Subslot: IOSUBSYSTEM 100, IOADDRESS 20, SLOT 0, SUBSLOT 1, ...  (skipped)
@@ -605,10 +606,17 @@ function _parseProfinet(lines) {
       continue;
     }
 
-    // ── Device header: IOSUBSYSTEM 100, IOADDRESS 20, "GSDML-…", "kf5075"
-    const deviceMatch = trimmed.match(
+    // ── Device header (two-string): IOSUBSYSTEM 100, IOADDRESS 20, "GSDML-…", "kf5075"
+    // ── Device header (one-string):  IOSUBSYSTEM 100, IOADDRESS 20, "kf5075"
+    const twoStringMatch = trimmed.match(
       /^IOSUBSYSTEM\s+(\d+)\s*,\s*IOADDRESS\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
     );
+    const singleStringMatch = !twoStringMatch && trimmed.match(
+      /^IOSUBSYSTEM\s+(\d+)\s*,\s*IOADDRESS\s+(\d+)\s*,\s*"([^"]*)"\s*$/i
+    );
+    // Normalise to [_, systemId, ioAddress, gsdml, name] — gsdml is empty for single-string variant
+    const deviceMatch = twoStringMatch
+      || (singleStringMatch ? [null, singleStringMatch[1], singleStringMatch[2], '', singleStringMatch[3]] : null);
     if (deviceMatch) {
       const systemId  = parseInt(deviceMatch[1], 10);
       const ioAddress = parseInt(deviceMatch[2], 10);

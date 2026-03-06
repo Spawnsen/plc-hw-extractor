@@ -257,23 +257,6 @@
           </div>
         </div>
 
-        <!-- ── Section: PROFINET IO Devices ────────────────── -->
-        <div class="collapsible-section" id="section-pndevices">
-          <button class="collapsible-header" aria-expanded="false">
-            <div class="collapsible-header-left">
-              <i data-lucide="wifi" style="width:18px;height:18px;color:var(--accent)"></i>
-              <h3>PROFINET IO-Geräte</h3>
-              <span class="badge badge-primary" id="badge-pndevices-count">0</span>
-            </div>
-            <i data-lucide="chevron-down" class="collapsible-icon" style="width:18px;height:18px;"></i>
-          </button>
-          <div class="collapsible-body">
-            <div id="pndevices-list">
-              <!-- Populated by JS -->
-            </div>
-          </div>
-        </div>
-
         <!-- ── Section: I/O Signals ─────────────────────────── -->
         <div class="collapsible-section" id="section-signals">
           <button class="collapsible-header" aria-expanded="false">
@@ -358,7 +341,7 @@
           <label><input type="checkbox" class="export-section-cb" value="networks"  checked /> Netzwerke</label>
           <label><input type="checkbox" class="export-section-cb" value="rack"      checked /> Rack-Konfiguration</label>
           <label><input type="checkbox" class="export-section-cb" value="slaves"    checked /> DP-Slaves</label>
-          <label><input type="checkbox" class="export-section-cb" value="pndevices" checked /> PROFINET IO-Geräte</label>
+          <label><input type="checkbox" class="export-section-cb" value="pndevices" checked /> PROFINET Teilnehmer</label>
           <label><input type="checkbox" class="export-section-cb" value="signals"   checked /> I/O Signale</label>
           <label><input type="checkbox" class="export-section-cb" value="inventory" checked /> Inventarliste (Summenstückliste)</label>
         </div>
@@ -661,15 +644,11 @@
       document.getElementById('badge-signals-count').textContent      = totalSigs;
       document.getElementById('badge-pn-participants-count').textContent = pnDevices.length;
 
-      const legacyPnDevices = data.pnDevices || [];
-      document.getElementById('badge-pndevices-count').textContent = legacyPnDevices.length;
-
       renderStationInfo(data);
-      renderNetworks(data.subnets || []);
+      renderNetworks(data);
       renderRack(data.rack);
       renderSlaves(slaves);
       renderPnParticipants(pnDevices);
-      renderPnDevices(legacyPnDevices);
       renderSignalTable();
     }
 
@@ -699,27 +678,55 @@
     }
 
     /**
-     * Renders the Networks section.
-     * @param {Array} subnets
+     * Renders the Networks section, showing only networks with connected devices.
+     * MPI networks and Ethernet subnets without IO devices are hidden.
+     * @param {Object} data
      */
-    function renderNetworks(subnets) {
-      const list = document.getElementById('networks-list');
+    function renderNetworks(data) {
+      const list     = document.getElementById('networks-list');
+      const subnets  = data.subnets  || [];
+      const dpSlaves = data.dpSlaves || [];
+      const profinet = data.profinet || { systems: [], devices: [] };
 
-      if (!subnets.length) {
-        list.innerHTML = '<p class="empty-state">Keine Netzwerke gefunden.</p>';
+      // Only show networks that have connected devices
+      const relevantNets = subnets.filter(net => {
+        if (net.type === 'MPI') return false;
+        if (net.type === 'PROFIBUS') return dpSlaves.length > 0;
+        if (net.type === 'INDUSTRIAL_ETHERNET') return profinet.devices.length > 0;
+        return false;
+      });
+
+      if (!relevantNets.length) {
+        list.innerHTML = '<p class="empty-state">Keine Netzwerke mit Teilnehmern gefunden.</p>';
         return;
       }
 
-      list.innerHTML = subnets.map(net => `
+      list.innerHTML = relevantNets.map(net => {
+        let displayName = net.name || net.type || 'Unbekannt';
+        let participantCount = 0;
+
+        if (net.type === 'PROFIBUS') {
+          participantCount = dpSlaves.length;
+        } else if (net.type === 'INDUSTRIAL_ETHERNET') {
+          // Use PN system name if available
+          if (profinet.systems && profinet.systems.length > 0) {
+            displayName = profinet.systems[0].name || displayName;
+          }
+          participantCount = profinet.devices.length;
+        }
+
+        return `
         <div class="network-item">
-          <span class="net-name">${_escapeHtml(net.name || net.type || 'Unbekannt')}</span>
+          <span class="net-name">${_escapeHtml(displayName)}</span>
           <span class="badge ${net.type === 'PROFIBUS' ? 'badge-warning' : 'badge-primary'}">
             ${_escapeHtml(net.type || '–')}
           </span>
           ${net.netId ? `<span class="net-id">${_escapeHtml(net.netId)}</span>` : ''}
           ${net.baudrate ? `<span class="badge badge-secondary">${_escapeHtml(net.baudrate)}</span>` : ''}
+          <span class="badge badge-secondary">${participantCount} Teilnehmer</span>
         </div>
-      `).join('');
+        `;
+      }).join('');
     }
 
     /**
@@ -854,9 +861,11 @@
                 <th>Name</th>
                 <th>IOADDRESS</th>
                 <th>IP-Adresse</th>
+                <th>Subnetzmaske</th>
                 <th>MAC</th>
                 <th>Module</th>
                 <th>GSDML</th>
+                <th>Diagnoseadresse</th>
               </tr>
             </thead>
             <tbody>
@@ -865,53 +874,11 @@
                   <td>${_escapeHtml(dev.name || '–')}</td>
                   <td>${dev.ioAddress}</td>
                   <td><code>${_escapeHtml(dev.ip || '–')}</code></td>
+                  <td><code>${_escapeHtml(dev.subnetMask || '–')}</code></td>
                   <td><code style="font-size:0.78rem">${_escapeHtml(dev.mac || '–')}</code></td>
                   <td>${dev.modulesCount || 0}</td>
                   <td style="font-size:0.78rem">${_escapeHtml(dev.gsdml || '–')}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `;
-    }
-
-    /**
-     * Renders the PROFINET IO devices section.
-     * @param {Array} pnDevices
-     */
-    function renderPnDevices(pnDevices) {
-      const container = document.getElementById('pndevices-list');
-
-      if (!pnDevices || !pnDevices.length) {
-        container.innerHTML = '<p class="empty-state">Keine PROFINET IO-Geräte gefunden.</p>';
-        return;
-      }
-
-      container.innerHTML = `
-        <div class="table-wrapper">
-          <table aria-label="PROFINET IO-Geräte">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>MLFB</th>
-                <th>IP-Adresse</th>
-                <th>Subnetzmaske</th>
-                <th>MAC</th>
-                <th>Asset-ID</th>
-                <th>GSDML</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${pnDevices.map(dev => `
-                <tr>
-                  <td>${_escapeHtml(dev.name || '–')}</td>
-                  <td><code>${_escapeHtml(dev.mlfb || '–')}</code></td>
-                  <td><code>${_escapeHtml(dev.ip || dev.ipHex || '–')}</code></td>
-                  <td><code>${_escapeHtml(dev.subnetMask || dev.subnetMaskHex || '–')}</code></td>
-                  <td><code style="font-size:0.78rem">${_escapeHtml(dev.mac || '–')}</code></td>
-                  <td>${_escapeHtml(dev.assetId || '–')}</td>
-                  <td style="font-size:0.78rem">${_escapeHtml(dev.gsdml || '–')}</td>
+                  <td>${dev.diagAddress !== null && dev.diagAddress !== undefined ? dev.diagAddress : '–'}</td>
                 </tr>
               `).join('')}
             </tbody>

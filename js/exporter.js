@@ -137,17 +137,17 @@ function buildInventory(data) {
     }
   }
 
-  // PROFINET IO devices
-  for (const dev of (data.pnDevices || [])) {
-    const key = dev.mlfb || dev.name;
+  // PROFINET devices
+  for (const dev of ((data.profinet && data.profinet.devices) || [])) {
+    const key = dev.gsdml || dev.name;
     if (!key) continue;
     const existing = map.get(key);
     if (existing) {
       existing.count++;
     } else {
       map.set(key, {
-        articleNumber: dev.mlfb || '–',
-        name:          dev.name || '–',
+        articleNumber: dev.gsdml || '–',
+        name:          dev.name  || '–',
         type:          'PN-Device',
         count:         1,
       });
@@ -172,7 +172,7 @@ function _filteredData(data, sections) {
   if (sections.includes('networks'))   result.subnets   = data.subnets;
   if (sections.includes('rack'))       result.rack      = data.rack;
   if (sections.includes('slaves'))     result.dpSlaves  = data.dpSlaves;
-  if (sections.includes('pndevices'))  result.pnDevices = data.pnDevices;
+  if (sections.includes('pndevices'))  result.pnDevices = (data.profinet && data.profinet.devices) || [];
   if (sections.includes('signals'))    result.signals   = data.signals;
   if (sections.includes('inventory'))  result.inventory = buildInventory(data);
   return result;
@@ -263,13 +263,16 @@ function exportAsCsv(data, sections) {
     blocks.push(rows.join('\n'));
   }
 
-  // PROFINET IO Devices
-  if (activeSections.includes('pndevices') && data.pnDevices && data.pnDevices.length) {
-    const rows = ['=== PROFINET IO-Geräte ===', _csvRow(['MLFB', 'Name', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Asset-ID', 'GSDML'])];
-    for (const dev of data.pnDevices) {
-      rows.push(_csvRow([dev.mlfb || '', dev.name || '', dev.ip || dev.ipHex || '', dev.subnetMask || dev.subnetMaskHex || '', dev.mac || '', dev.assetId || '', dev.gsdml || '']));
+  // PROFINET Teilnehmer
+  if (activeSections.includes('pndevices')) {
+    const pnDevices = (data.profinet && data.profinet.devices) || [];
+    if (pnDevices.length) {
+      const rows = ['=== PROFINET Teilnehmer ===', _csvRow(['Name', 'IOADDRESS', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Module', 'GSDML', 'Diagnoseadresse'])];
+      for (const dev of pnDevices) {
+        rows.push(_csvRow([dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.modulesCount || 0, dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '']));
+      }
+      blocks.push(rows.join('\n'));
     }
-    blocks.push(rows.join('\n'));
   }
 
   // I/O Signale
@@ -380,13 +383,16 @@ function exportAsExcel(data, sections) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'DP-Slaves');
   }
 
-  // PROFINET IO Devices
-  if (activeSections.includes('pndevices') && data.pnDevices && data.pnDevices.length) {
-    const aoa = [['MLFB', 'Name', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Asset-ID', 'GSDML']];
-    for (const dev of data.pnDevices) {
-      aoa.push([dev.mlfb || '', dev.name || '', dev.ip || dev.ipHex || '', dev.subnetMask || dev.subnetMaskHex || '', dev.mac || '', dev.assetId || '', dev.gsdml || '']);
+  // PROFINET Teilnehmer
+  if (activeSections.includes('pndevices')) {
+    const pnDevices = (data.profinet && data.profinet.devices) || [];
+    if (pnDevices.length) {
+      const aoa = [['Name', 'IOADDRESS', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Module', 'GSDML', 'Diagnoseadresse']];
+      for (const dev of pnDevices) {
+        aoa.push([dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.modulesCount || 0, dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '']);
+      }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'PROFINET Teilnehmer');
     }
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'PROFINET IO');
   }
 
   // IO-Signale
@@ -499,10 +505,13 @@ function exportAsPdf(data, sections) {
     sectionHtml.push(`<section><h2>DP-Slaves</h2>${_htmlTable(['DP-Adresse', 'GSD-Datei', 'Slave-Name', 'Slot', 'Modul', 'Richtung', 'Byte-Adresse'], rows)}</section>`);
   }
 
-  // PROFINET IO Devices
-  if (activeSections.includes('pndevices') && data.pnDevices && data.pnDevices.length) {
-    const rows = data.pnDevices.map(dev => [dev.mlfb || '', dev.name || '', dev.ip || dev.ipHex || '', dev.subnetMask || dev.subnetMaskHex || '', dev.mac || '', dev.assetId || '', dev.gsdml || '']);
-    sectionHtml.push(`<section><h2>PROFINET IO-Geräte</h2>${_htmlTable(['MLFB', 'Name', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Asset-ID', 'GSDML'], rows)}</section>`);
+  // PROFINET Teilnehmer
+  if (activeSections.includes('pndevices')) {
+    const pnDevices = (data.profinet && data.profinet.devices) || [];
+    if (pnDevices.length) {
+      const rows = pnDevices.map(dev => [dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.modulesCount || 0, dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '']);
+      sectionHtml.push(`<section><h2>PROFINET Teilnehmer</h2>${_htmlTable(['Name', 'IOADDRESS', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Module', 'GSDML', 'Diagnoseadresse'], rows)}</section>`);
+    }
   }
 
   // I/O Signale
