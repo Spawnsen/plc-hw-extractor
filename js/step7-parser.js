@@ -442,6 +442,32 @@ function _readSlotBlock(lines, startIdx, slotObj) {
       continue;
     }
 
+    // Network fields (present in SLOT 0 / interface slot blocks)
+    // IPADDRESS: quoted compact hex ("C0A80014") or spaced bytes (C0 A8 00 14)
+    if ((m = trimmed.match(/^IPADDRESS\s+"([0-9A-Fa-f]+)"/i))) {
+      slotObj.ip = _hexStringToIp(m[1]);
+    } else if ((m = trimmed.match(/^IPADDRESS\s+([0-9A-Fa-f ]+)/i))) {
+      slotObj.ip = _hexBytesToIp(m[1].trim());
+    }
+    // MACADDRESS: quoted compact hex or spaced bytes
+    if ((m = trimmed.match(/^MACADDRESS\s+"([0-9A-Fa-f]+)"/i))) {
+      slotObj.mac = m[1].trim();
+    } else if ((m = trimmed.match(/^MACADDRESS\s+([0-9A-Fa-f ]+)/i))) {
+      slotObj.mac = m[1].trim();
+    }
+    // SUBNETMASK: quoted compact hex or spaced bytes
+    if ((m = trimmed.match(/^SUBNETMASK\s+"([0-9A-Fa-f]+)"/i))) {
+      slotObj.subnetMask = _hexStringToIp(m[1]);
+    } else if ((m = trimmed.match(/^SUBNETMASK\s+([0-9A-Fa-f ]+)/i))) {
+      slotObj.subnetMask = _hexBytesToIp(m[1].trim());
+    }
+    // ROUTERADDRESS: quoted compact hex or spaced bytes
+    if ((m = trimmed.match(/^ROUTERADDRESS\s+"([0-9A-Fa-f]+)"/i))) {
+      slotObj.router = _hexStringToIp(m[1]);
+    } else if ((m = trimmed.match(/^ROUTERADDRESS\s+([0-9A-Fa-f ]+)/i))) {
+      slotObj.router = _hexBytesToIp(m[1].trim());
+    }
+
     // SYMBOL  I , 0, "SS0001_24V_iO", ""
     // SYMBOL  O , 0, "Freig_an_RBG11", ""
     if ((m = trimmed.match(/^SYMBOL\s+(I|O)\s*,\s*(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"/i))) {
@@ -513,6 +539,20 @@ function _parsePnDevices(_lines) {
 // ─── PROFINET Participants (IOSUBSYSTEM with IOADDRESS keyword) ───────────────
 
 /**
+ * Propagates network fields (ip, mac, subnetMask, router) from a SLOT 0 object
+ * to the parent device, but only for fields not already set on the device.
+ * SLOT 0 is the interface slot and carries IP/MAC configuration in real-world files.
+ * @param {Object} slotObj
+ * @param {Object} dev
+ */
+function _propagateSlot0Network(slotObj, dev) {
+  if (slotObj.ip         !== null && dev.ip         === null) dev.ip         = slotObj.ip;
+  if (slotObj.mac        !== null && dev.mac        === null) dev.mac        = slotObj.mac;
+  if (slotObj.subnetMask !== null && dev.subnetMask === null) dev.subnetMask = slotObj.subnetMask;
+  if (slotObj.router     !== null && dev.router     === null) dev.router     = slotObj.router;
+}
+
+/**
  * Parses IOSUBSYSTEM blocks that use the IOADDRESS keyword format.
  * This is the sole PROFINET parser; the legacy three-number IOSUBSYSTEM format
  * is no longer processed (see _parsePnDevices which returns []).
@@ -567,6 +607,10 @@ function _parseProfinet(lines) {
         moduleName:  moduleName,
         direction:   null,
         byteAddress: null,
+        ip:          null,
+        mac:         null,
+        subnetMask:  null,
+        router:      null,
         signals:     [],
       };
       i = _readSlotBlock(lines, i + 1, slotObj);
@@ -575,6 +619,7 @@ function _parseProfinet(lines) {
       if (deviceMap[devKey]) {
         deviceMap[devKey].slots.push(slotObj);
         deviceMap[devKey].modulesCount++;
+        if (slotNo === 0) _propagateSlot0Network(slotObj, deviceMap[devKey]);
       }
       continue;
     }
@@ -594,6 +639,10 @@ function _parseProfinet(lines) {
         moduleName:  null,
         direction:   null,
         byteAddress: null,
+        ip:          null,
+        mac:         null,
+        subnetMask:  null,
+        router:      null,
         signals:     [],
       };
       i = _readSlotBlock(lines, i + 1, slotObj);
@@ -602,14 +651,16 @@ function _parseProfinet(lines) {
       if (deviceMap[devKey]) {
         deviceMap[devKey].slots.push(slotObj);
         deviceMap[devKey].modulesCount++;
+        if (slotNo === 0) _propagateSlot0Network(slotObj, deviceMap[devKey]);
       }
       continue;
     }
 
     // ── Device header (two-string): IOSUBSYSTEM 100, IOADDRESS 20, "GSDML-…", "kf5075"
+    //    Also handles optional firmware token:  "GSDML-…" "V4.1", "kf5075"
     // ── Device header (one-string):  IOSUBSYSTEM 100, IOADDRESS 20, "kf5075"
     const twoStringMatch = trimmed.match(
-      /^IOSUBSYSTEM\s+(\d+)\s*,\s*IOADDRESS\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
+      /^IOSUBSYSTEM\s+(\d+)\s*,\s*IOADDRESS\s+(\d+)\s*,\s*"([^"]*)"\s*(?:"[^"]*"\s*)?,\s*"([^"]*)"\s*$/i
     );
     const singleStringMatch = !twoStringMatch && trimmed.match(
       /^IOSUBSYSTEM\s+(\d+)\s*,\s*IOADDRESS\s+(\d+)\s*,\s*"([^"]*)"\s*$/i
