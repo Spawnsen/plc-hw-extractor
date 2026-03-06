@@ -25,6 +25,7 @@ function parseStep7Cfg(text) {
     rack:      _parseRack(lines),
     dpSlaves:  _parseDpSlaves(lines),
     pnDevices: _parsePnDevices(lines),
+    profinet:  _parseProfinet(lines),
     signals:   [],
   };
 
@@ -359,7 +360,9 @@ function _readSlaveProperties(lines, startIdx, slave) {
 
 /**
  * Reads a slot BEGIN...END block, extracting signals and addresses.
- * Returns the line index of the END line.
+ * Uses a depth counter to correctly handle nested BEGIN...END pairs
+ * (e.g. the LOCAL_IN/OUT_ADDRESSES sub-block).
+ * Returns the line index of the outer END line.
  * @param {string[]} lines
  * @param {number} startIdx
  * @param {Object} slotObj
@@ -367,19 +370,25 @@ function _readSlaveProperties(lines, startIdx, slave) {
  */
 function _readSlotBlock(lines, startIdx, slotObj) {
   let i = startIdx;
-  let inBlock = false;
+  let depth = 0;
   let pendingAddressType = null;
   let inLocalAddresses = false;
 
   for (; i < lines.length; i++) {
     const trimmed = lines[i].trim();
 
-    if (/^BEGIN\b/i.test(trimmed)) { inBlock = true; continue; }
-    if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
-      return i;
+    if (/^BEGIN\b/i.test(trimmed)) {
+      depth++;
+      continue;
+    }
+    if (/^END\b/i.test(trimmed) && !/^END_/i.test(trimmed)) {
+      depth--;
+      if (depth === 0) return i;      // outer block closed — done
+      if (depth === 1) inLocalAddresses = false; // exited nested sub-block
+      continue;
     }
 
-    if (!inBlock) continue;
+    if (depth < 1) continue; // before outer BEGIN
 
     let m;
 
@@ -402,11 +411,7 @@ function _readSlotBlock(lines, startIdx, slotObj) {
         slotObj.byteAddress = parseInt(m[1], 10);
         slotObj.direction   = pendingAddressType;
       }
-      inLocalAddresses = false;
       continue;
-    }
-    if (inLocalAddresses && trimmed && !/^\d/.test(trimmed)) {
-      inLocalAddresses = false;
     }
 
     // SYMBOL  I , 0, "SS0001_24V_iO", ""
@@ -560,6 +565,236 @@ function _readPnDeviceBlock(lines, startIdx, device) {
     if (inLocalInAddr && trimmed && !/^\d/.test(trimmed) && !/^BEGIN\b/i.test(trimmed) && !/^END\b/i.test(trimmed)) {
       inLocalInAddr = false;
     }
+  }
+
+  return i;
+}
+
+// ─── PROFINET Participants (IOSUBSYSTEM with IOADDRESS keyword) ───────────────
+
+/**
+ * Parses IOSUBSYSTEM blocks that use the IOADDRESS keyword format.
+ * This is the real PROFINET export format used in STEP 7 cfg files.
+ *
+ * Recognized header variants:
+ *   System:  IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+ *   Device:  IOSUBSYSTEM 100, IOADDRESS 20, "GSDML-...", "kf5075"
+ *   Slot:    IOSUBSYSTEM 100, IOADDRESS 20, SLOT 5, "module", "name"
+ *   Slot bare: IOSUBSYSTEM 100, IOADDRESS 20, SLOT 0
+ *   Subslot: IOSUBSYSTEM 100, IOADDRESS 20, SLOT 0, SUBSLOT 1, ...  (skipped)
+ *
+ * Participants are counted at IOADDRESS level only.  Subslots (ports/interfaces)
+ * are intentionally excluded from the device list.
+ *
+ * @param {string[]} lines
+ * @returns {{ systems: Array, devices: Array }}
+ */
+function _parseProfinet(lines) {
+  const systems   = [];
+  const systemMap = {}; // id -> system
+  const devices   = [];
+  const deviceMap = {}; // key: `${systemId}_${ioAddress}` -> device
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+
+    if (!/^IOSUBSYSTEM\b/i.test(trimmed)) continue;
+
+    // ── Subslot (skip): IOSUBSYSTEM …, IOADDRESS …, SLOT …, SUBSLOT …
+    if (/^IOSUBSYSTEM\s+\d+\s*,\s*IOADDRESS\s+\d+\s*,\s*SLOT\s+\d+\s*,\s*SUBSLOT\b/i.test(trimmed)) {
+      i = _skipBlock(lines, i + 1);
+      continue;
+    }
+
+    // ── Slot with module/name (optional firmware token):
+    //    IOSUBSYSTEM 100, IOADDRESS 20, SLOT 5, "module" ["fw"], "name"
+    //    Groups: 1=systemId  2=ioAddress  3=slotNo  4=moduleType  [fw skipped]  5=moduleName
+    const slotNameMatch = trimmed.match(
+      /^IOSUBSYSTEM\s+(\d+)\s*,\s*IOADDRESS\s+(\d+)\s*,\s*SLOT\s+(\d+)\s*,\s*"([^"]*)"\s*(?:"[^"]*")?\s*,\s*"([^"]*)"\s*$/i
+    );
+    if (slotNameMatch) {
+      const systemId   = parseInt(slotNameMatch[1], 10);
+      const ioAddress  = parseInt(slotNameMatch[2], 10);
+      const slotNo     = parseInt(slotNameMatch[3], 10);
+      const moduleType = slotNameMatch[4];
+      const moduleName = slotNameMatch[5];
+
+      const slotObj = {
+        slot:        slotNo,
+        moduleType:  moduleType,
+        moduleName:  moduleName,
+        direction:   null,
+        byteAddress: null,
+        signals:     [],
+      };
+      i = _readSlotBlock(lines, i + 1, slotObj);
+
+      const devKey = `${systemId}_${ioAddress}`;
+      if (deviceMap[devKey]) {
+        deviceMap[devKey].slots.push(slotObj);
+        deviceMap[devKey].modulesCount++;
+      }
+      continue;
+    }
+
+    // ── Bare slot (no module/name): IOSUBSYSTEM 100, IOADDRESS 20, SLOT 0
+    const slotBareMatch = trimmed.match(
+      /^IOSUBSYSTEM\s+(\d+)\s*,\s*IOADDRESS\s+(\d+)\s*,\s*SLOT\s+(\d+)\s*$/i
+    );
+    if (slotBareMatch) {
+      const systemId  = parseInt(slotBareMatch[1], 10);
+      const ioAddress = parseInt(slotBareMatch[2], 10);
+      const slotNo    = parseInt(slotBareMatch[3], 10);
+
+      const slotObj = {
+        slot:        slotNo,
+        moduleType:  null,
+        moduleName:  null,
+        direction:   null,
+        byteAddress: null,
+        signals:     [],
+      };
+      i = _readSlotBlock(lines, i + 1, slotObj);
+
+      const devKey = `${systemId}_${ioAddress}`;
+      if (deviceMap[devKey]) {
+        deviceMap[devKey].slots.push(slotObj);
+        deviceMap[devKey].modulesCount++;
+      }
+      continue;
+    }
+
+    // ── Device header: IOSUBSYSTEM 100, IOADDRESS 20, "GSDML-…", "kf5075"
+    const deviceMatch = trimmed.match(
+      /^IOSUBSYSTEM\s+(\d+)\s*,\s*IOADDRESS\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
+    );
+    if (deviceMatch) {
+      const systemId  = parseInt(deviceMatch[1], 10);
+      const ioAddress = parseInt(deviceMatch[2], 10);
+      const gsdml     = deviceMatch[3];
+      const name      = deviceMatch[4];
+
+      const devKey = `${systemId}_${ioAddress}`;
+      if (!deviceMap[devKey]) {
+        const dev = {
+          systemId,
+          ioAddress,
+          gsdml,
+          name,
+          ip:           null,
+          mac:          null,
+          subnetMask:   null,
+          router:       null,
+          slots:        [],
+          modulesCount: 0,
+          signals:      [],
+        };
+        deviceMap[devKey] = dev;
+        devices.push(dev);
+      }
+      i = _readPnParticipantBlock(lines, i + 1, deviceMap[devKey]);
+      continue;
+    }
+
+    // ── System header: IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+    const systemMatch = trimmed.match(/^IOSUBSYSTEM\s+(\d+)\s*,\s*"([^"]*)"\s*$/i);
+    if (systemMatch) {
+      const id   = parseInt(systemMatch[1], 10);
+      const name = systemMatch[2];
+      if (!systemMap[id]) {
+        const sys = { id, name };
+        systemMap[id] = sys;
+        systems.push(sys);
+      }
+      i = _skipBlock(lines, i + 1);
+      continue;
+    }
+  }
+
+  // Build per-device flat signal list
+  for (const dev of devices) {
+    for (const slot of dev.slots) {
+      for (const sig of slot.signals) {
+        dev.signals.push({
+          deviceName:  dev.name    || `PN${dev.ioAddress}`,
+          ioAddress:   dev.ioAddress,
+          pnSystemId:  dev.systemId,
+          module:      slot.moduleType || slot.moduleName || '',
+          slot:        slot.slot,
+          type:        sig.type,
+          byteAddress: slot.byteAddress !== null ? slot.byteAddress : null,
+          bit:         sig.bit,
+          symbolName:  sig.name,
+          comment:     sig.comment,
+        });
+      }
+    }
+  }
+
+  return { systems, devices };
+}
+
+/**
+ * Skips a BEGIN…END block, returning the index of the END line.
+ * Uses a depth counter so nested BEGIN/END pairs are handled correctly.
+ * If no BEGIN is found as the next non-blank line, returns startIdx - 1
+ * so the caller's loop index stays on the current line.
+ * @param {string[]} lines
+ * @param {number} startIdx
+ * @returns {number}
+ */
+function _skipBlock(lines, startIdx) {
+  let i = startIdx;
+
+  // Skip leading blank lines
+  while (i < lines.length && !lines[i].trim()) i++;
+
+  if (i >= lines.length || !/^BEGIN\b/i.test(lines[i].trim())) {
+    return startIdx - 1; // no block present
+  }
+
+  let depth = 0;
+  for (; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (/^BEGIN\b/i.test(t)) {
+      depth++;
+    } else if (/^END\b/i.test(t) && !/^END_/i.test(t)) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return i;
+}
+
+/**
+ * Reads an IOSUBSYSTEM device BEGIN…END block (IOADDRESS format).
+ * Extracts NAME, IPADDRESS, MACADDRESS, SUBNETMASK, ROUTERADDRESS.
+ * Returns the line index of the END line.
+ * @param {string[]} lines
+ * @param {number} startIdx
+ * @param {Object} dev
+ * @returns {number}
+ */
+function _readPnParticipantBlock(lines, startIdx, dev) {
+  let i = startIdx;
+  let inBlock = false;
+
+  for (; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+
+    if (/^BEGIN\b/i.test(trimmed)) { inBlock = true; continue; }
+    if (/^END\b/i.test(trimmed) && !/^END_/i.test(trimmed)) {
+      return i;
+    }
+
+    if (!inBlock) continue;
+
+    let m;
+    if ((m = trimmed.match(/^NAME\s+"([^"]*)"/i)))              dev.name       = m[1];
+    if ((m = trimmed.match(/^IPADDRESS\s+([0-9A-Fa-f ]+)/i)))  dev.ip         = _hexBytesToIp(m[1].trim());
+    if ((m = trimmed.match(/^MACADDRESS\s+([0-9A-Fa-f ]+)/i))) dev.mac        = m[1].trim();
+    if ((m = trimmed.match(/^SUBNETMASK\s+([0-9A-Fa-f ]+)/i))) dev.subnetMask = _hexBytesToIp(m[1].trim());
+    if ((m = trimmed.match(/^ROUTERADDRESS\s+([0-9A-Fa-f ]+)/i))) dev.router  = _hexBytesToIp(m[1].trim());
   }
 
   return i;

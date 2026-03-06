@@ -153,6 +153,10 @@
               <div class="stat-label">DP-Slaves</div>
             </div>
             <div class="stat-card">
+              <div class="stat-value" id="stat-pn-participants">–</div>
+              <div class="stat-label">PN Teilnehmer</div>
+            </div>
+            <div class="stat-card">
               <div class="stat-value" id="stat-modules">–</div>
               <div class="stat-label">I/O Module</div>
             </div>
@@ -231,6 +235,23 @@
           </button>
           <div class="collapsible-body">
             <div class="slaves-list" id="slaves-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Section: PROFINET Teilnehmer ─────────────────── -->
+        <div class="collapsible-section" id="section-pn-participants">
+          <button class="collapsible-header" aria-expanded="false">
+            <div class="collapsible-header-left">
+              <i data-lucide="wifi" style="width:18px;height:18px;color:var(--accent)"></i>
+              <h3>PROFINET Teilnehmer</h3>
+              <span class="badge badge-primary" id="badge-pn-participants-count">0</span>
+            </div>
+            <i data-lucide="chevron-down" class="collapsible-icon" style="width:18px;height:18px;"></i>
+          </button>
+          <div class="collapsible-body">
+            <div id="pn-participants-list">
               <!-- Populated by JS -->
             </div>
           </div>
@@ -617,28 +638,38 @@
         station.name || 'Unbekannte Station';
       document.getElementById('result-filename').textContent = fileName;
 
-      const slaves    = data.dpSlaves || [];
-      const modules   = slaves.reduce((n, s) => n + (s.slots || []).length, 0);
+      const slaves      = data.dpSlaves  || [];
+      const profinet    = data.profinet  || { systems: [], devices: [] };
+      const pnDevices   = profinet.devices;
+
+      // I/O Module count: DP modules + PN slot modules (excluding subslots)
+      const dpModules = slaves.reduce((n, s) => n + (s.slots || []).length, 0);
+      const pnModules = pnDevices.reduce((n, d) => n + (d.modulesCount || 0), 0);
+      const modules   = dpModules + pnModules;
+
       const inputs    = allSignals.filter(s => s.type === 'I').length;
       const outputs   = allSignals.filter(s => s.type === 'O').length;
       const totalSigs = allSignals.length;
 
-      document.getElementById('stat-slaves').textContent        = slaves.length;
-      document.getElementById('stat-modules').textContent       = modules;
-      document.getElementById('stat-inputs').textContent        = inputs;
-      document.getElementById('stat-outputs').textContent       = outputs;
-      document.getElementById('stat-total-signals').textContent = totalSigs;
-      document.getElementById('badge-slaves-count').textContent = slaves.length;
-      document.getElementById('badge-signals-count').textContent = totalSigs;
+      document.getElementById('stat-slaves').textContent              = slaves.length;
+      document.getElementById('stat-pn-participants').textContent     = pnDevices.length;
+      document.getElementById('stat-modules').textContent             = modules;
+      document.getElementById('stat-inputs').textContent              = inputs;
+      document.getElementById('stat-outputs').textContent             = outputs;
+      document.getElementById('stat-total-signals').textContent       = totalSigs;
+      document.getElementById('badge-slaves-count').textContent       = slaves.length;
+      document.getElementById('badge-signals-count').textContent      = totalSigs;
+      document.getElementById('badge-pn-participants-count').textContent = pnDevices.length;
 
-      const pnDevices = data.pnDevices || [];
-      document.getElementById('badge-pndevices-count').textContent = pnDevices.length;
+      const legacyPnDevices = data.pnDevices || [];
+      document.getElementById('badge-pndevices-count').textContent = legacyPnDevices.length;
 
       renderStationInfo(data);
       renderNetworks(data.subnets || []);
       renderRack(data.rack);
       renderSlaves(slaves);
-      renderPnDevices(pnDevices);
+      renderPnParticipants(pnDevices);
+      renderPnDevices(legacyPnDevices);
       renderSignalTable();
     }
 
@@ -801,6 +832,48 @@
           </div>
         `;
       }).join('');
+    }
+
+    /**
+     * Renders the PROFINET Teilnehmer section (new IOADDRESS-format devices).
+     * @param {Array} pnParticipants
+     */
+    function renderPnParticipants(pnParticipants) {
+      const container = document.getElementById('pn-participants-list');
+
+      if (!pnParticipants || !pnParticipants.length) {
+        container.innerHTML = '<p class="empty-state">Keine PROFINET Teilnehmer gefunden.</p>';
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="table-wrapper">
+          <table aria-label="PROFINET Teilnehmer">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>IOADDRESS</th>
+                <th>IP-Adresse</th>
+                <th>MAC</th>
+                <th>Module</th>
+                <th>GSDML</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pnParticipants.map(dev => `
+                <tr>
+                  <td>${_escapeHtml(dev.name || '–')}</td>
+                  <td>${dev.ioAddress}</td>
+                  <td><code>${_escapeHtml(dev.ip || '–')}</code></td>
+                  <td><code style="font-size:0.78rem">${_escapeHtml(dev.mac || '–')}</code></td>
+                  <td>${dev.modulesCount || 0}</td>
+                  <td style="font-size:0.78rem">${_escapeHtml(dev.gsdml || '–')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
     }
 
     /**

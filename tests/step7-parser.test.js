@@ -184,6 +184,135 @@ END
   assertEqual(dev.mlfb,       null, 'mlfb is null when not present');
 });
 
+// ── New-format PROFINET (IOADDRESS keyword) ────────────────────────────────
+
+const PN_SYSTEM_SNIPPET = `
+IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+BEGIN
+END
+`;
+
+describe('Profinet — system header detection', () => {
+  const data = parseStep7Cfg(PN_SYSTEM_SNIPPET);
+  assert(data.profinet !== undefined,             'profinet key exists');
+  assert(Array.isArray(data.profinet.systems),   'profinet.systems is an array');
+  assertEqual(data.profinet.systems.length, 1,   'one system found');
+  assertEqual(data.profinet.systems[0].id,   100, 'system id = 100');
+  assertEqual(data.profinet.systems[0].name, 'PN: PROFINET-IO-System (100)', 'system name');
+  assert(Array.isArray(data.profinet.devices),   'profinet.devices is an array');
+  assertEqual(data.profinet.devices.length,  0,  'no devices (only system header)');
+});
+
+const PN_DEVICES_SNIPPET = `
+IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 20, "GSDML-V2.33-ACME-kf5075-20220301.xml", "kf5075"
+BEGIN
+  NAME "kf5075_Station"
+  IPADDRESS 0A 01 00 14
+  MACADDRESS 00 1A 2B 3C 4D 5E
+  SUBNETMASK FF FF FF 00
+  ROUTERADDRESS 0A 01 00 01
+END
+IOSUBSYSTEM 100, IOADDRESS 21, "GSDML-V2.33-ACME-ET200SP-20220301.xml", "ET200SP_1"
+BEGIN
+  NAME "ET200SP_Station"
+END
+IOSUBSYSTEM 100, IOADDRESS 20, SLOT 0, SUBSLOT 1, "...", "Ethernet Interface"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 20, SLOT 0, SUBSLOT 2, "...", "Port 1"
+BEGIN
+END
+`;
+
+describe('Profinet — devices at IOADDRESS level', () => {
+  const data = parseStep7Cfg(PN_DEVICES_SNIPPET);
+  assertEqual(data.profinet.devices.length, 2, 'two devices (one per IOADDRESS)');
+
+  const dev = data.profinet.devices[0];
+  assertEqual(dev.systemId,   100,                                       'systemId = 100');
+  assertEqual(dev.ioAddress,   20,                                       'ioAddress = 20');
+  assertEqual(dev.gsdml, 'GSDML-V2.33-ACME-kf5075-20220301.xml',        'gsdml extracted');
+  assertEqual(dev.name,  'kf5075_Station',                               'name overridden by NAME in block');
+  assertEqual(dev.ip,    '10.1.0.20',                                    'ip as dotted IPv4');
+  assertEqual(dev.mac,   '00 1A 2B 3C 4D 5E',                           'mac extracted');
+  assertEqual(dev.subnetMask, '255.255.255.0',                           'subnetMask extracted');
+  assertEqual(dev.router, '10.1.0.1',                                    'router extracted');
+
+  const dev2 = data.profinet.devices[1];
+  assertEqual(dev2.ioAddress, 21, 'second device ioAddress = 21');
+  assertEqual(dev2.name, 'ET200SP_Station', 'second device name');
+});
+
+describe('Profinet — participant count ignores SUBSLOT entries', () => {
+  const data = parseStep7Cfg(PN_DEVICES_SNIPPET);
+  // SUBSLOT lines must not inflate the device count
+  assertEqual(data.profinet.devices.length, 2, 'SUBSLOT lines do not create extra participants');
+});
+
+const PN_SLOT_SIGNALS_SNIPPET = `
+IOSUBSYSTEM 100, IOADDRESS 20, "GSDML-V2.33-ACME-kf5075-20220301.xml", "kf5075"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 20, SLOT 5, "6ES7 131-6BF01-0BA0", "DI8"
+BEGIN
+  LOCAL_IN_ADDRESSES
+  BEGIN
+    ADDRESS 32, 0, 1, 0, 0, 0
+  END
+  SYMBOL  I , 0, "kf5075_DI0", "Sensor 0"
+  SYMBOL  I , 1, "kf5075_DI1", "Sensor 1"
+END
+`;
+
+describe('Profinet — slot with LOCAL_IN_ADDRESSES and SYMBOL I/O produces signals', () => {
+  const data = parseStep7Cfg(PN_SLOT_SIGNALS_SNIPPET);
+  assertEqual(data.profinet.devices.length, 1, 'one PN device');
+
+  const dev = data.profinet.devices[0];
+  assertEqual(dev.slots.length,        1,    'one slot attached');
+  assertEqual(dev.modulesCount,        1,    'modulesCount = 1');
+
+  const slot = dev.slots[0];
+  assertEqual(slot.slot,          5,             'slot number = 5');
+  assertEqual(slot.byteAddress,  32,             'byteAddress from LOCAL_IN_ADDRESSES');
+  assertEqual(slot.direction,   'IN',            'direction = IN');
+  assertEqual(slot.signals.length, 2,            'two signals');
+  assertEqual(slot.signals[0].name,    'kf5075_DI0', 'first signal name');
+  assertEqual(slot.signals[0].comment, 'Sensor 0',   'first signal comment');
+  assertEqual(slot.signals[0].type,    'I',           'first signal type');
+  assertEqual(slot.signals[1].bit,     1,             'second signal bit = 1');
+
+  // Signals should also appear in dev.signals
+  assertEqual(dev.signals.length, 2, 'two signals in dev.signals');
+  assertEqual(dev.signals[0].ioAddress,  20,          'signal ioAddress = 20');
+  assertEqual(dev.signals[0].pnSystemId, 100,         'signal pnSystemId = 100');
+  assertEqual(dev.signals[0].symbolName, 'kf5075_DI0', 'signal symbolName');
+});
+
+describe('Profinet — bare slot (no module/name on header line)', () => {
+  const snippet = `
+IOSUBSYSTEM 100, IOADDRESS 20, "GSDML.xml", "dev"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 20, SLOT 0
+BEGIN
+END
+`;
+  const data = parseStep7Cfg(snippet);
+  assertEqual(data.profinet.devices[0].slots.length, 1, 'bare slot is still attached');
+  assertEqual(data.profinet.devices[0].modulesCount, 1, 'bare slot increments modulesCount');
+});
+
+describe('Profinet — empty profinet for file without IOSUBSYSTEM IOADDRESS blocks', () => {
+  const data = parseStep7Cfg(RACK_SIMPLE_SNIPPET);
+  assert(data.profinet !== undefined,            'profinet key always present');
+  assertEqual(data.profinet.systems.length, 0,  'no systems');
+  assertEqual(data.profinet.devices.length, 0,  'no devices');
+});
+
 // ── Summary ────────────────────────────────────────────────────────────────
 
 console.log(`\n──────────────────────────────────`);
