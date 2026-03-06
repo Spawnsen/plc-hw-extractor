@@ -2,8 +2,8 @@
  * step7-parser.js — STEP 7 .cfg file parser
  *
  * Parses a Siemens STEP 7 .cfg configuration file and returns a structured
- * JavaScript object containing station info, subnets, rack, DP slaves, and
- * all I/O signals.
+ * JavaScript object containing station info, subnets, rack, DP slaves,
+ * PROFINET IO devices (IOSUBSYSTEM), and all I/O signals.
  */
 
 'use strict';
@@ -19,12 +19,13 @@
 function parseStep7Cfg(text) {
   const lines = text.split(/\r?\n/);
   const result = {
-    meta:     _parseMeta(lines),
-    station:  _parseStation(lines),
-    subnets:  _parseSubnets(lines),
-    rack:     _parseRack(lines),
-    dpSlaves: _parseDpSlaves(lines),
-    signals:  [],
+    meta:      _parseMeta(lines),
+    station:   _parseStation(lines),
+    subnets:   _parseSubnets(lines),
+    rack:      _parseRack(lines),
+    dpSlaves:  _parseDpSlaves(lines),
+    pnDevices: _parsePnDevices(lines),
+    signals:   [],
   };
 
   // Derive flat signal list from DP slaves
@@ -202,19 +203,22 @@ function _parseRack(lines) {
     }
 
     // Match slot: RACK 0, SLOT 3, "6ES7 416-2XK02-0AB0", "CPU1_Main"
+    //        or: RACK 0, SLOT 3, "6ES7 416-2XK02-0AB0" "V7.0", "CPU1_Main"  (optional firmware token)
     // Must NOT contain SUBSLOT
-    const slotMatch = trimmed.match(/^RACK\s+(\d+)\s*,\s*SLOT\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i);
+    const slotMatch = trimmed.match(/^RACK\s+(\d+)\s*,\s*SLOT\s+(\d+)\s*,\s*"([^"]*)"\s*(?:"([^"]*)")?\s*,\s*"([^"]*)"\s*$/i);
     if (slotMatch) {
       if (!rack) {
         rack = { rackNo: parseInt(slotMatch[1], 10), articleNumber: null, name: null, slots: [] };
       }
       const articleNumber = slotMatch[3];
-      rack.slots.push({
+      const slotEntry = {
         slot:          parseInt(slotMatch[2], 10),
         articleNumber: articleNumber,
-        name:          slotMatch[4],
+        name:          slotMatch[5],
         type:          _detectSlotType(articleNumber),
-      });
+      };
+      if (slotMatch[4]) slotEntry.firmware = slotMatch[4];
+      rack.slots.push(slotEntry);
       continue;
     }
 
@@ -424,6 +428,137 @@ function _readSlotBlock(lines, startIdx, slotObj) {
         comment: sigComment,
       });
       continue;
+    }
+  }
+
+  return i;
+}
+
+// ─── PROFINET IO (IOSUBSYSTEM) ────────────────────────────────────────────────
+
+/**
+ * Converts a hex byte string (e.g. "0A 01 00 05") to dotted IPv4 notation.
+ * Returns null if the input is falsy or doesn't have exactly 4 bytes.
+ * @param {string|null} hexStr
+ * @returns {string|null}
+ */
+function _hexBytesToIp(hexStr) {
+  if (!hexStr) return null;
+  const parts = hexStr.trim().split(/\s+/);
+  if (parts.length !== 4) return null;
+  return parts.map(b => parseInt(b, 16)).join('.');
+}
+
+/**
+ * Extracts all IOSUBSYSTEM blocks (PROFINET IO devices).
+ * Header format:
+ *   IOSUBSYSTEM <ioSubsystemId>, <ioAddress>, <slot>, "<gsdml>", "<name>"
+ * Block content (BEGIN...END) may contain:
+ *   NAME, ASSET_ID, MLFB, MACADDRESS, IPADDRESS, SUBNETMASK, ROUTERADDRESS,
+ *   PN_SW_RELEASE, PN_HW_RELEASE, PN_MIN_VERSION, LOCAL_IN_ADDRESSES/ADDRESS
+ * @param {string[]} lines
+ * @returns {Array}
+ */
+function _parsePnDevices(lines) {
+  const devices = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+
+    // IOSUBSYSTEM header: IOSUBSYSTEM <id>, <addr>, <slot>, "<gsdml>", "<name>"
+    const headerMatch = trimmed.match(
+      /^IOSUBSYSTEM\s+(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"/i
+    );
+    if (!headerMatch) continue;
+
+    const device = {
+      ioSubsystemId: parseInt(headerMatch[1], 10),
+      ioAddress:     parseInt(headerMatch[2], 10),
+      slot:          parseInt(headerMatch[3], 10),
+      gsdml:         headerMatch[4],
+      name:          headerMatch[5],
+      assetId:       null,
+      mlfb:          null,
+      mac:           null,
+      ipHex:         null,
+      ip:            null,
+      subnetMaskHex: null,
+      subnetMask:    null,
+      routerHex:     null,
+      router:        null,
+      pnSwRelease:   null,
+      pnHwRelease:   null,
+      pnMinVersion:  null,
+      localInAddress: null,
+    };
+
+    // Read the BEGIN...END block
+    i = _readPnDeviceBlock(lines, i + 1, device);
+    devices.push(device);
+  }
+
+  return devices;
+}
+
+/**
+ * Reads an IOSUBSYSTEM BEGIN...END block, populating the device object.
+ * Returns the line index of the END line.
+ * @param {string[]} lines
+ * @param {number} startIdx
+ * @param {Object} device
+ * @returns {number}
+ */
+function _readPnDeviceBlock(lines, startIdx, device) {
+  let i = startIdx;
+  let inBlock = false;
+  let inLocalInAddr = false;
+
+  for (; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+
+    if (/^BEGIN\b/i.test(trimmed)) { inBlock = true; continue; }
+    if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
+      return i;
+    }
+
+    if (!inBlock) continue;
+
+    let m;
+    if ((m = trimmed.match(/^NAME\s+"([^"]*)"/i)))           device.name         = m[1];
+    if ((m = trimmed.match(/^ASSET_ID\s+"([^"]*)"/i)))       device.assetId      = m[1];
+    if ((m = trimmed.match(/^MLFB\s+"([^"]*)"/i)))           device.mlfb         = m[1];
+    if ((m = trimmed.match(/^MACADDRESS\s+([0-9A-Fa-f ]+)/i))) device.mac        = m[1].trim();
+    if ((m = trimmed.match(/^PN_SW_RELEASE\s+"([^"]*)"/i)))  device.pnSwRelease  = m[1];
+    if ((m = trimmed.match(/^PN_HW_RELEASE\s+"([^"]*)"/i)))  device.pnHwRelease  = m[1];
+    if ((m = trimmed.match(/^PN_MIN_VERSION\s+"([^"]*)"/i))) device.pnMinVersion = m[1];
+
+    if ((m = trimmed.match(/^IPADDRESS\s+([0-9A-Fa-f ]+)/i))) {
+      device.ipHex = m[1].trim();
+      device.ip    = _hexBytesToIp(device.ipHex);
+    }
+    if ((m = trimmed.match(/^SUBNETMASK\s+([0-9A-Fa-f ]+)/i))) {
+      device.subnetMaskHex = m[1].trim();
+      device.subnetMask    = _hexBytesToIp(device.subnetMaskHex);
+    }
+    if ((m = trimmed.match(/^ROUTERADDRESS\s+([0-9A-Fa-f ]+)/i))) {
+      device.routerHex = m[1].trim();
+      device.router    = _hexBytesToIp(device.routerHex);
+    }
+
+    // Track LOCAL_IN_ADDRESSES block to pick up the first ADDRESS
+    if (/^LOCAL_IN_ADDRESSES\b/i.test(trimmed)) {
+      inLocalInAddr = true;
+      continue;
+    }
+    if (inLocalInAddr && (m = trimmed.match(/^ADDRESS\s+(\d+)/i))) {
+      if (device.localInAddress === null) {
+        device.localInAddress = parseInt(m[1], 10);
+      }
+      inLocalInAddr = false;
+      continue;
+    }
+    if (inLocalInAddr && trimmed && !/^\d/.test(trimmed) && !/^BEGIN\b/i.test(trimmed) && !/^END\b/i.test(trimmed)) {
+      inLocalInAddr = false;
     }
   }
 

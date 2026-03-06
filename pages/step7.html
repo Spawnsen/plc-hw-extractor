@@ -236,6 +236,23 @@
           </div>
         </div>
 
+        <!-- ── Section: PROFINET IO Devices ────────────────── -->
+        <div class="collapsible-section" id="section-pndevices">
+          <button class="collapsible-header" aria-expanded="false">
+            <div class="collapsible-header-left">
+              <i data-lucide="wifi" style="width:18px;height:18px;color:var(--accent)"></i>
+              <h3>PROFINET IO-Geräte</h3>
+              <span class="badge badge-primary" id="badge-pndevices-count">0</span>
+            </div>
+            <i data-lucide="chevron-down" class="collapsible-icon" style="width:18px;height:18px;"></i>
+          </button>
+          <div class="collapsible-body">
+            <div id="pndevices-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+
         <!-- ── Section: I/O Signals ─────────────────────────── -->
         <div class="collapsible-section" id="section-signals">
           <button class="collapsible-header" aria-expanded="false">
@@ -320,6 +337,7 @@
           <label><input type="checkbox" class="export-section-cb" value="networks"  checked /> Netzwerke</label>
           <label><input type="checkbox" class="export-section-cb" value="rack"      checked /> Rack-Konfiguration</label>
           <label><input type="checkbox" class="export-section-cb" value="slaves"    checked /> DP-Slaves</label>
+          <label><input type="checkbox" class="export-section-cb" value="pndevices" checked /> PROFINET IO-Geräte</label>
           <label><input type="checkbox" class="export-section-cb" value="signals"   checked /> I/O Signale</label>
           <label><input type="checkbox" class="export-section-cb" value="inventory" checked /> Inventarliste (Summenstückliste)</label>
         </div>
@@ -613,10 +631,14 @@
       document.getElementById('badge-slaves-count').textContent = slaves.length;
       document.getElementById('badge-signals-count').textContent = totalSigs;
 
+      const pnDevices = data.pnDevices || [];
+      document.getElementById('badge-pndevices-count').textContent = pnDevices.length;
+
       renderStationInfo(data);
       renderNetworks(data.subnets || []);
       renderRack(data.rack);
       renderSlaves(slaves);
+      renderPnDevices(pnDevices);
       renderSignalTable();
     }
 
@@ -779,6 +801,50 @@
           </div>
         `;
       }).join('');
+    }
+
+    /**
+     * Renders the PROFINET IO devices section.
+     * @param {Array} pnDevices
+     */
+    function renderPnDevices(pnDevices) {
+      const container = document.getElementById('pndevices-list');
+
+      if (!pnDevices || !pnDevices.length) {
+        container.innerHTML = '<p class="empty-state">Keine PROFINET IO-Geräte gefunden.</p>';
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="table-wrapper">
+          <table aria-label="PROFINET IO-Geräte">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>MLFB</th>
+                <th>IP-Adresse</th>
+                <th>Subnetzmaske</th>
+                <th>MAC</th>
+                <th>Asset-ID</th>
+                <th>GSDML</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pnDevices.map(dev => `
+                <tr>
+                  <td>${_escapeHtml(dev.name || '–')}</td>
+                  <td><code>${_escapeHtml(dev.mlfb || '–')}</code></td>
+                  <td><code>${_escapeHtml(dev.ip || dev.ipHex || '–')}</code></td>
+                  <td><code>${_escapeHtml(dev.subnetMask || dev.subnetMaskHex || '–')}</code></td>
+                  <td><code style="font-size:0.78rem">${_escapeHtml(dev.mac || '–')}</code></td>
+                  <td>${_escapeHtml(dev.assetId || '–')}</td>
+                  <td style="font-size:0.78rem">${_escapeHtml(dev.gsdml || '–')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
     }
 
     /**
