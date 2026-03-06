@@ -267,7 +267,7 @@ function _detectSlotType(articleNumber) {
  */
 function _parseDpSlaves(lines) {
   const slaves = [];
-  const slaveMap = {}; // key: dpAddress -> slave object
+  const slaveMap = {}; // key: `${dpSubsystem}_${dpAddress}` -> slave object
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
@@ -275,36 +275,41 @@ function _parseDpSlaves(lines) {
     // ── Slave header: DPSUBSYSTEM 1, DPADDRESS 3, "DP2V0550.GSD", "SS0001"
     // Must have DPADDRESS but NOT SLOT
     const slaveMatch = trimmed.match(
-      /^DPSUBSYSTEM\s+\d+\s*,\s*DPADDRESS\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
+      /^DPSUBSYSTEM\s+(\d+)\s*,\s*DPADDRESS\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
     );
     if (slaveMatch) {
-      const dpAddr  = parseInt(slaveMatch[1], 10);
-      const gsdFile = slaveMatch[2];
-      const name    = slaveMatch[3];
+      const dpSubsystem = parseInt(slaveMatch[1], 10);
+      const dpAddr      = parseInt(slaveMatch[2], 10);
+      const gsdFile     = slaveMatch[3];
+      const name        = slaveMatch[4];
       const slave = {
-        dpAddress: dpAddr,
-        gsdFile:   gsdFile,
-        name:      name,
-        assetId:   null,
-        slots:     [],
+        dpAddress:   dpAddr,
+        dpSubsystem: dpSubsystem,
+        gsdFile:     gsdFile,
+        name:        name,
+        assetId:     null,
+        diagAddress: null,
+        slots:       [],
       };
-      slaveMap[dpAddr] = slave;
+      const slaveKey = `${dpSubsystem}_${dpAddr}`;
+      slaveMap[slaveKey] = slave;
       slaves.push(slave);
 
-      // Read ASSET_ID from the BEGIN...END block following this header
+      // Read ASSET_ID and diagAddress from the BEGIN...END block following this header
       i = _readSlaveProperties(lines, i + 1, slave);
       continue;
     }
 
     // ── Slot header: DPSUBSYSTEM 1, DPADDRESS 3, SLOT 0, "221-1BF00  DI8xDC24V", "8DE"
     const slotMatch = trimmed.match(
-      /^DPSUBSYSTEM\s+\d+\s*,\s*DPADDRESS\s+(\d+)\s*,\s*SLOT\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
+      /^DPSUBSYSTEM\s+(\d+)\s*,\s*DPADDRESS\s+(\d+)\s*,\s*SLOT\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
     );
     if (slotMatch) {
-      const dpAddr     = parseInt(slotMatch[1], 10);
-      const slotNo     = parseInt(slotMatch[2], 10);
-      const moduleType = slotMatch[3];
-      const moduleName = slotMatch[4];
+      const dpSubsystem = parseInt(slotMatch[1], 10);
+      const dpAddr      = parseInt(slotMatch[2], 10);
+      const slotNo      = parseInt(slotMatch[3], 10);
+      const moduleType  = slotMatch[4];
+      const moduleName  = slotMatch[5];
 
       const slotObj = {
         slot:        slotNo,
@@ -318,9 +323,10 @@ function _parseDpSlaves(lines) {
       // Read the BEGIN...END block for this slot
       i = _readSlotBlock(lines, i + 1, slotObj);
 
-      // Attach to slave
-      if (slaveMap[dpAddr]) {
-        slaveMap[dpAddr].slots.push(slotObj);
+      // Attach to slave using composite key
+      const slaveKey = `${dpSubsystem}_${dpAddr}`;
+      if (slaveMap[slaveKey]) {
+        slaveMap[slaveKey].slots.push(slotObj);
       }
       continue;
     }
@@ -330,8 +336,10 @@ function _parseDpSlaves(lines) {
 }
 
 /**
- * Reads properties (ASSET_ID etc.) from a BEGIN...END block.
- * Returns the line index of the END line.
+ * Reads properties (ASSET_ID, diagAddress etc.) from a BEGIN...END block.
+ * Uses a depth counter to correctly handle nested BEGIN...END pairs
+ * (e.g. the LOCAL_IN_ADDRESSES sub-block).
+ * Returns the line index of the outer END line.
  * @param {string[]} lines
  * @param {number} startIdx
  * @param {Object} slave
@@ -339,20 +347,40 @@ function _parseDpSlaves(lines) {
  */
 function _readSlaveProperties(lines, startIdx, slave) {
   let i = startIdx;
-  let inBlock = false;
+  let depth = 0;
+  let inLocalInAddr = false;
 
   for (; i < lines.length; i++) {
     const trimmed = lines[i].trim();
 
-    if (/^BEGIN\b/i.test(trimmed)) { inBlock = true; continue; }
+    if (/^BEGIN\b/i.test(trimmed)) { depth++; continue; }
     if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
-      return i;
+      depth--;
+      if (depth <= 0) return i;
+      inLocalInAddr = false; // exited nested sub-block
+      continue;
     }
 
-    if (!inBlock) continue;
+    if (depth < 1) continue;
 
     let m;
     if ((m = trimmed.match(/^ASSET_ID\s+"([^"]*)"/i))) slave.assetId = m[1];
+
+    // LOCAL_IN_ADDRESSES block: the first ADDRESS value is the diagnosis address
+    if (/^LOCAL_IN_ADDRESSES\b/i.test(trimmed)) {
+      inLocalInAddr = true;
+      continue;
+    }
+    if (inLocalInAddr && (m = trimmed.match(/^ADDRESS\s+(\d+)/i))) {
+      if (slave.diagAddress === null) {
+        slave.diagAddress = parseInt(m[1], 10);
+      }
+      inLocalInAddr = false;
+      continue;
+    }
+    if (inLocalInAddr && trimmed && !/^BEGIN\b/i.test(trimmed) && !/^END\b/i.test(trimmed)) {
+      inLocalInAddr = false;
+    }
   }
 
   return i;
@@ -455,126 +483,39 @@ function _hexBytesToIp(hexStr) {
 }
 
 /**
- * Extracts all IOSUBSYSTEM blocks (PROFINET IO devices).
- * Header format:
- *   IOSUBSYSTEM <ioSubsystemId>, <ioAddress>, <slot>, "<gsdml>", "<name>"
- * Block content (BEGIN...END) may contain:
- *   NAME, ASSET_ID, MLFB, MACADDRESS, IPADDRESS, SUBNETMASK, ROUTERADDRESS,
- *   PN_SW_RELEASE, PN_HW_RELEASE, PN_MIN_VERSION, LOCAL_IN_ADDRESSES/ADDRESS
- * @param {string[]} lines
- * @returns {Array}
+ * Converts a compact 8-character hex string (e.g. "C0A80014") to dotted IPv4 notation.
+ * Returns null if the input is falsy or is not exactly 8 hex characters.
+ * @param {string|null} hexStr
+ * @returns {string|null}
  */
-function _parsePnDevices(lines) {
-  const devices = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-
-    // IOSUBSYSTEM header: IOSUBSYSTEM <id>, <addr>, <slot>, "<gsdml>", "<name>"
-    const headerMatch = trimmed.match(
-      /^IOSUBSYSTEM\s+(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"/i
-    );
-    if (!headerMatch) continue;
-
-    const device = {
-      ioSubsystemId: parseInt(headerMatch[1], 10),
-      ioAddress:     parseInt(headerMatch[2], 10),
-      slot:          parseInt(headerMatch[3], 10),
-      gsdml:         headerMatch[4],
-      name:          headerMatch[5],
-      assetId:       null,
-      mlfb:          null,
-      mac:           null,
-      ipHex:         null,
-      ip:            null,
-      subnetMaskHex: null,
-      subnetMask:    null,
-      routerHex:     null,
-      router:        null,
-      pnSwRelease:   null,
-      pnHwRelease:   null,
-      pnMinVersion:  null,
-      localInAddress: null,
-    };
-
-    // Read the BEGIN...END block
-    i = _readPnDeviceBlock(lines, i + 1, device);
-    devices.push(device);
+function _hexStringToIp(hexStr) {
+  if (!hexStr) return null;
+  const s = hexStr.trim();
+  if (!/^[0-9A-Fa-f]{8}$/i.test(s)) return null;
+  const parts = [];
+  for (let i = 0; i < 8; i += 2) {
+    parts.push(parseInt(s.slice(i, i + 2), 16));
   }
-
-  return devices;
+  return parts.join('.');
 }
 
 /**
- * Reads an IOSUBSYSTEM BEGIN...END block, populating the device object.
- * Returns the line index of the END line.
- * @param {string[]} lines
- * @param {number} startIdx
- * @param {Object} device
- * @returns {number}
+ * Legacy IOSUBSYSTEM parser (old three-number format).
+ * Superseded by _parseProfinet which handles the modern IOADDRESS keyword format.
+ * Returns an empty array; kept for API compatibility.
+ * @param {string[]} _lines
+ * @returns {Array}
  */
-function _readPnDeviceBlock(lines, startIdx, device) {
-  let i = startIdx;
-  let inBlock = false;
-  let inLocalInAddr = false;
-
-  for (; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-
-    if (/^BEGIN\b/i.test(trimmed)) { inBlock = true; continue; }
-    if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
-      return i;
-    }
-
-    if (!inBlock) continue;
-
-    let m;
-    if ((m = trimmed.match(/^NAME\s+"([^"]*)"/i)))           device.name         = m[1];
-    if ((m = trimmed.match(/^ASSET_ID\s+"([^"]*)"/i)))       device.assetId      = m[1];
-    if ((m = trimmed.match(/^MLFB\s+"([^"]*)"/i)))           device.mlfb         = m[1];
-    if ((m = trimmed.match(/^MACADDRESS\s+([0-9A-Fa-f ]+)/i))) device.mac        = m[1].trim();
-    if ((m = trimmed.match(/^PN_SW_RELEASE\s+"([^"]*)"/i)))  device.pnSwRelease  = m[1];
-    if ((m = trimmed.match(/^PN_HW_RELEASE\s+"([^"]*)"/i)))  device.pnHwRelease  = m[1];
-    if ((m = trimmed.match(/^PN_MIN_VERSION\s+"([^"]*)"/i))) device.pnMinVersion = m[1];
-
-    if ((m = trimmed.match(/^IPADDRESS\s+([0-9A-Fa-f ]+)/i))) {
-      device.ipHex = m[1].trim();
-      device.ip    = _hexBytesToIp(device.ipHex);
-    }
-    if ((m = trimmed.match(/^SUBNETMASK\s+([0-9A-Fa-f ]+)/i))) {
-      device.subnetMaskHex = m[1].trim();
-      device.subnetMask    = _hexBytesToIp(device.subnetMaskHex);
-    }
-    if ((m = trimmed.match(/^ROUTERADDRESS\s+([0-9A-Fa-f ]+)/i))) {
-      device.routerHex = m[1].trim();
-      device.router    = _hexBytesToIp(device.routerHex);
-    }
-
-    // Track LOCAL_IN_ADDRESSES block to pick up the first ADDRESS
-    if (/^LOCAL_IN_ADDRESSES\b/i.test(trimmed)) {
-      inLocalInAddr = true;
-      continue;
-    }
-    if (inLocalInAddr && (m = trimmed.match(/^ADDRESS\s+(\d+)/i))) {
-      if (device.localInAddress === null) {
-        device.localInAddress = parseInt(m[1], 10);
-      }
-      inLocalInAddr = false;
-      continue;
-    }
-    if (inLocalInAddr && trimmed && !/^\d/.test(trimmed) && !/^BEGIN\b/i.test(trimmed) && !/^END\b/i.test(trimmed)) {
-      inLocalInAddr = false;
-    }
-  }
-
-  return i;
+function _parsePnDevices(_lines) {
+  return [];
 }
 
 // ─── PROFINET Participants (IOSUBSYSTEM with IOADDRESS keyword) ───────────────
 
 /**
  * Parses IOSUBSYSTEM blocks that use the IOADDRESS keyword format.
- * This is the real PROFINET export format used in STEP 7 cfg files.
+ * This is the sole PROFINET parser; the legacy three-number IOSUBSYSTEM format
+ * is no longer processed (see _parsePnDevices which returns []).
  *
  * Recognized header variants:
  *   System:  IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
@@ -681,6 +622,8 @@ function _parseProfinet(lines) {
           ioAddress,
           gsdml,
           name,
+          assetId:      null,
+          diagAddress:  null,
           ip:           null,
           mac:          null,
           subnetMask:   null,
@@ -768,7 +711,10 @@ function _skipBlock(lines, startIdx) {
 
 /**
  * Reads an IOSUBSYSTEM device BEGIN…END block (IOADDRESS format).
- * Extracts NAME, IPADDRESS, MACADDRESS, SUBNETMASK, ROUTERADDRESS.
+ * Extracts NAME, ASSET_ID, IPADDRESS, MACADDRESS, SUBNETMASK, ROUTERADDRESS,
+ * and LOCAL_IN_ADDRESSES → ADDRESS (diagnosis address).
+ * Handles both spaced-hex format (e.g. "C0 A8 00 14") and quoted compact
+ * hex format (e.g. "C0A80014") for IP/subnet/router addresses.
  * Returns the line index of the END line.
  * @param {string[]} lines
  * @param {number} startIdx
@@ -777,24 +723,69 @@ function _skipBlock(lines, startIdx) {
  */
 function _readPnParticipantBlock(lines, startIdx, dev) {
   let i = startIdx;
-  let inBlock = false;
+  let depth = 0;
+  let inLocalInAddr = false;
 
   for (; i < lines.length; i++) {
     const trimmed = lines[i].trim();
 
-    if (/^BEGIN\b/i.test(trimmed)) { inBlock = true; continue; }
+    if (/^BEGIN\b/i.test(trimmed)) { depth++; continue; }
     if (/^END\b/i.test(trimmed) && !/^END_/i.test(trimmed)) {
-      return i;
+      depth--;
+      if (depth <= 0) return i;
+      inLocalInAddr = false; // exited nested sub-block
+      continue;
     }
 
-    if (!inBlock) continue;
+    if (depth < 1) continue;
 
     let m;
-    if ((m = trimmed.match(/^NAME\s+"([^"]*)"/i)))              dev.name       = m[1];
-    if ((m = trimmed.match(/^IPADDRESS\s+([0-9A-Fa-f ]+)/i)))  dev.ip         = _hexBytesToIp(m[1].trim());
-    if ((m = trimmed.match(/^MACADDRESS\s+([0-9A-Fa-f ]+)/i))) dev.mac        = m[1].trim();
-    if ((m = trimmed.match(/^SUBNETMASK\s+([0-9A-Fa-f ]+)/i))) dev.subnetMask = _hexBytesToIp(m[1].trim());
-    if ((m = trimmed.match(/^ROUTERADDRESS\s+([0-9A-Fa-f ]+)/i))) dev.router  = _hexBytesToIp(m[1].trim());
+    if ((m = trimmed.match(/^NAME\s+"([^"]*)"/i)))     dev.name    = m[1];
+    if ((m = trimmed.match(/^ASSET_ID\s+"([^"]*)"/i))) dev.assetId = m[1];
+
+    // IPADDRESS: quoted compact hex ("C0A80014") or spaced bytes (C0 A8 00 14)
+    if ((m = trimmed.match(/^IPADDRESS\s+"([0-9A-Fa-f]+)"/i))) {
+      dev.ip = _hexStringToIp(m[1]);
+    } else if ((m = trimmed.match(/^IPADDRESS\s+([0-9A-Fa-f ]+)/i))) {
+      dev.ip = _hexBytesToIp(m[1].trim());
+    }
+
+    // MACADDRESS: quoted compact hex or spaced bytes
+    if ((m = trimmed.match(/^MACADDRESS\s+"([0-9A-Fa-f]+)"/i))) {
+      dev.mac = m[1].trim();
+    } else if ((m = trimmed.match(/^MACADDRESS\s+([0-9A-Fa-f ]+)/i))) {
+      dev.mac = m[1].trim();
+    }
+
+    // SUBNETMASK: quoted compact hex or spaced bytes
+    if ((m = trimmed.match(/^SUBNETMASK\s+"([0-9A-Fa-f]+)"/i))) {
+      dev.subnetMask = _hexStringToIp(m[1]);
+    } else if ((m = trimmed.match(/^SUBNETMASK\s+([0-9A-Fa-f ]+)/i))) {
+      dev.subnetMask = _hexBytesToIp(m[1].trim());
+    }
+
+    // ROUTERADDRESS: quoted compact hex or spaced bytes
+    if ((m = trimmed.match(/^ROUTERADDRESS\s+"([0-9A-Fa-f]+)"/i))) {
+      dev.router = _hexStringToIp(m[1]);
+    } else if ((m = trimmed.match(/^ROUTERADDRESS\s+([0-9A-Fa-f ]+)/i))) {
+      dev.router = _hexBytesToIp(m[1].trim());
+    }
+
+    // LOCAL_IN_ADDRESSES block: first ADDRESS value is the diagnosis address
+    if (/^LOCAL_IN_ADDRESSES\b/i.test(trimmed)) {
+      inLocalInAddr = true;
+      continue;
+    }
+    if (inLocalInAddr && (m = trimmed.match(/^ADDRESS\s+(\d+)/i))) {
+      if (dev.diagAddress === null) {
+        dev.diagAddress = parseInt(m[1], 10);
+      }
+      inLocalInAddr = false;
+      continue;
+    }
+    if (inLocalInAddr && trimmed && !/^BEGIN\b/i.test(trimmed) && !/^END\b/i.test(trimmed)) {
+      inLocalInAddr = false;
+    }
   }
 
   return i;
@@ -814,8 +805,9 @@ function _buildSignalList(dpSlaves) {
     for (const slot of slave.slots) {
       for (const sig of slot.signals) {
         signals.push({
-          slaveName:   slave.name   || `DP${slave.dpAddress}`,
+          slaveName:    slave.name   || `DP${slave.dpAddress}`,
           slaveAddress: slave.dpAddress,
+          dpSubsystem:  slave.dpSubsystem,
           module:       slot.moduleType || slot.moduleName || '',
           slot:         slot.slot,
           type:         sig.type,

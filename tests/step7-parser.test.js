@@ -48,18 +48,17 @@ function describe(name, fn) {
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
 const IOSUBSYSTEM_SNIPPET = `
-IOSUBSYSTEM 1, 5, 1, "GSDML-V2.3-Siemens-ET200SP-20150902.xml", "et200sp-device"
+IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 20, "GSDML-V2.3-Siemens-ET200SP-20150902.xml", "et200sp-device"
 BEGIN
   NAME "ET200SP_Station_1"
   ASSET_ID "ASSET-001"
-  MLFB "6ES7 155-6AU00-0BN0"
   MACADDRESS 00 1C 06 1A 2B 3C
   IPADDRESS 0A 01 00 05
   SUBNETMASK FF FF FF 00
   ROUTERADDRESS 0A 01 00 01
-  PN_SW_RELEASE "V4.1"
-  PN_HW_RELEASE "V1.0"
-  PN_MIN_VERSION "V2.3"
   LOCAL_IN_ADDRESSES
   BEGIN
     ADDRESS 100, 0, 4, 0, 0, 0
@@ -87,31 +86,24 @@ RACK 0, SLOT 3, SUBSLOT 1, "6GK7 443-1EX11-0XE0", "IE Interface"
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-describe('PROFINET IOSUBSYSTEM parsing', () => {
+describe('PROFINET IOSUBSYSTEM parsing (IOADDRESS format)', () => {
   const data = parseStep7Cfg(IOSUBSYSTEM_SNIPPET);
 
-  assert(Array.isArray(data.pnDevices), 'pnDevices is an array');
-  assertEqual(data.pnDevices.length, 1, 'one device found');
+  assertEqual(data.pnDevices.length, 0, 'pnDevices is always empty (legacy parser disabled)');
+  assert(Array.isArray(data.profinet.devices), 'profinet.devices is an array');
+  assertEqual(data.profinet.devices.length, 1, 'one device found');
 
-  const dev = data.pnDevices[0];
-  assertEqual(dev.ioSubsystemId, 1,             'ioSubsystemId = 1');
-  assertEqual(dev.ioAddress,     5,             'ioAddress = 5');
-  assertEqual(dev.slot,          1,             'slot = 1');
-  assertEqual(dev.gsdml,         'GSDML-V2.3-Siemens-ET200SP-20150902.xml', 'gsdml matches');
-  assertEqual(dev.name,          'ET200SP_Station_1', 'name overridden by NAME inside block');
-  assertEqual(dev.assetId,       'ASSET-001',   'assetId extracted');
-  assertEqual(dev.mlfb,          '6ES7 155-6AU00-0BN0', 'mlfb extracted');
-  assertEqual(dev.mac,           '00 1C 06 1A 2B 3C', 'mac extracted');
-  assertEqual(dev.ipHex,         '0A 01 00 05', 'ipHex extracted');
-  assertEqual(dev.ip,            '10.1.0.5',    'ip as dotted IPv4');
-  assertEqual(dev.subnetMaskHex, 'FF FF FF 00', 'subnetMaskHex extracted');
-  assertEqual(dev.subnetMask,    '255.255.255.0', 'subnetMask as dotted IPv4');
-  assertEqual(dev.routerHex,     '0A 01 00 01', 'routerHex extracted');
-  assertEqual(dev.router,        '10.1.0.1',    'router as dotted IPv4');
-  assertEqual(dev.pnSwRelease,   'V4.1',        'pnSwRelease extracted');
-  assertEqual(dev.pnHwRelease,   'V1.0',        'pnHwRelease extracted');
-  assertEqual(dev.pnMinVersion,  'V2.3',        'pnMinVersion extracted');
-  assertEqual(dev.localInAddress, 100,          'localInAddress extracted');
+  const dev = data.profinet.devices[0];
+  assertEqual(dev.systemId,    100,                                      'systemId = 100');
+  assertEqual(dev.ioAddress,    20,                                      'ioAddress = 20');
+  assertEqual(dev.gsdml, 'GSDML-V2.3-Siemens-ET200SP-20150902.xml',     'gsdml matches');
+  assertEqual(dev.name,  'ET200SP_Station_1', 'name overridden by NAME inside block');
+  assertEqual(dev.assetId,     'ASSET-001',   'assetId extracted');
+  assertEqual(dev.mac,         '00 1C 06 1A 2B 3C', 'mac extracted');
+  assertEqual(dev.ip,          '10.1.0.5',    'ip as dotted IPv4');
+  assertEqual(dev.subnetMask,  '255.255.255.0', 'subnetMask as dotted IPv4');
+  assertEqual(dev.router,      '10.1.0.1',    'router as dotted IPv4');
+  assertEqual(dev.diagAddress, 100,           'diagAddress extracted from LOCAL_IN_ADDRESSES');
 });
 
 describe('Rack parsing — simple slot header (no firmware token)', () => {
@@ -163,7 +155,7 @@ describe('No regression — empty pnDevices array for files without PROFINET', (
 
 describe('Robustness — IOSUBSYSTEM with missing optional fields', () => {
   const snippet = `
-IOSUBSYSTEM 2, 10, 2, "GSDML-minimal.xml", "minimal-device"
+IOSUBSYSTEM 100, IOADDRESS 10, "GSDML-minimal.xml", "minimal-device"
 BEGIN
   NAME "MinimalDevice"
 END
@@ -176,12 +168,13 @@ END
     assert(false, `parser threw: ${e.message}`);
     return;
   }
-  assertEqual(data.pnDevices.length, 1, 'one device found');
-  const dev = data.pnDevices[0];
+  assertEqual(data.profinet.devices.length, 1, 'one device found');
+  const dev = data.profinet.devices[0];
   assertEqual(dev.ip,         null, 'ip is null when not present');
   assertEqual(dev.subnetMask, null, 'subnetMask is null when not present');
   assertEqual(dev.mac,        null, 'mac is null when not present');
-  assertEqual(dev.mlfb,       null, 'mlfb is null when not present');
+  assertEqual(dev.assetId,    null, 'assetId is null when not present');
+  assertEqual(dev.diagAddress, null, 'diagAddress is null when not present');
 });
 
 // ── New-format PROFINET (IOADDRESS keyword) ────────────────────────────────
@@ -311,6 +304,140 @@ describe('Profinet — empty profinet for file without IOSUBSYSTEM IOADDRESS blo
   assert(data.profinet !== undefined,            'profinet key always present');
   assertEqual(data.profinet.systems.length, 0,  'no systems');
   assertEqual(data.profinet.devices.length, 0,  'no devices');
+});
+
+// ── Bug 2: Quoted hex IP format ────────────────────────────────────────────
+
+const PN_QUOTED_HEX_SNIPPET = `
+IOSUBSYSTEM 100, "PN: PROFINET-IO-System (100)"
+BEGIN
+END
+IOSUBSYSTEM 100, IOADDRESS 20, "GSDML-V2.33-ACME-kf5075-20220301.xml", "kf5075"
+BEGIN
+  NAME "kf5075_Station"
+  ASSET_ID "ASSET-HG14-001"
+  IPADDRESS "C0A80014"
+  SUBNETMASK "FFFFFF00"
+  ROUTERADDRESS "C0A80101"
+  MACADDRESS "080006010000"
+  LOCAL_IN_ADDRESSES
+  BEGIN
+    ADDRESS 16300, 0, 0, 0, 2, 0
+  END
+END
+`;
+
+describe('Profinet — quoted compact hex IP/MAC/subnet/router (STEP 7 v5.6+ format)', () => {
+  const data = parseStep7Cfg(PN_QUOTED_HEX_SNIPPET);
+  assertEqual(data.profinet.devices.length, 1, 'one device found');
+
+  const dev = data.profinet.devices[0];
+  assertEqual(dev.ip,          '192.168.0.20',   'ip from quoted hex "C0A80014"');
+  assertEqual(dev.subnetMask,  '255.255.255.0',  'subnetMask from quoted hex "FFFFFF00"');
+  assertEqual(dev.router,      '192.168.1.1',    'router from quoted hex "C0A80101"');
+  assertEqual(dev.mac,         '080006010000',   'mac from quoted hex stored as-is');
+  assertEqual(dev.assetId,     'ASSET-HG14-001', 'assetId extracted');
+  assertEqual(dev.diagAddress, 16300,            'diagAddress from LOCAL_IN_ADDRESSES');
+});
+
+// ── Bug 1: DP slave diagAddress ────────────────────────────────────────────
+
+const DP_DIAG_SNIPPET = `
+DPSUBSYSTEM 1, "PROFIBUS HG1: DP-Mastersystem (1)"
+BEGIN
+END
+DPSUBSYSTEM 1, DPADDRESS 3, "DP2V0550.GSD", "14LS0110"
+BEGIN
+  ASSET_ID "SLAVE-003"
+  LOCAL_IN_ADDRESSES
+    ADDRESS  16381, 0, 0, 0, 2, 0
+END
+DPSUBSYSTEM 1, DPADDRESS 4, "DP2V0550.GSD", "14BP0111"
+BEGIN
+  ASSET_ID "SLAVE-004"
+  LOCAL_IN_ADDRESSES
+  BEGIN
+    ADDRESS  16380, 0, 0, 0, 2, 0
+  END
+END
+`;
+
+describe('DP slave — diagAddress from LOCAL_IN_ADDRESSES (Bug 1)', () => {
+  const data = parseStep7Cfg(DP_DIAG_SNIPPET);
+  assertEqual(data.dpSlaves.length, 2, 'two DP slaves found');
+
+  const s1 = data.dpSlaves[0];
+  assertEqual(s1.name,        '14LS0110', 'slave 1 name');
+  assertEqual(s1.assetId,     'SLAVE-003', 'slave 1 assetId');
+  assertEqual(s1.diagAddress, 16381,       'slave 1 diagAddress (bare ADDRESS)');
+  assertEqual(s1.dpSubsystem, 1,           'slave 1 dpSubsystem');
+
+  const s2 = data.dpSlaves[1];
+  assertEqual(s2.name,        '14BP0111', 'slave 2 name');
+  assertEqual(s2.diagAddress, 16380,       'slave 2 diagAddress (nested BEGIN/END)');
+});
+
+// ── Bug 3: dpSubsystem composite key ──────────────────────────────────────
+
+const DP_MULTI_SUBSYSTEM_SNIPPET = `
+DPSUBSYSTEM 1, DPADDRESS 3, "DP2V0550.GSD", "Slave1_Sub1"
+BEGIN
+END
+DPSUBSYSTEM 1, DPADDRESS 3, SLOT 0, "221-1BF00  DI8xDC24V", "DI8"
+BEGIN
+  LOCAL_IN_ADDRESSES
+  BEGIN
+    ADDRESS 10, 0, 1, 0, 0, 0
+  END
+  SYMBOL  I , 0, "Slave1_Sub1_DI0", "Signal A"
+END
+DPSUBSYSTEM 2, DPADDRESS 3, "DP2V0550.GSD", "Slave1_Sub2"
+BEGIN
+END
+DPSUBSYSTEM 2, DPADDRESS 3, SLOT 0, "221-1BF00  DI8xDC24V", "DI8"
+BEGIN
+  LOCAL_IN_ADDRESSES
+  BEGIN
+    ADDRESS 20, 0, 1, 0, 0, 0
+  END
+  SYMBOL  I , 0, "Slave1_Sub2_DI0", "Signal B"
+END
+`;
+
+describe('DP slaves — composite dpSubsystem_dpAddress key prevents collision (Bug 3)', () => {
+  const data = parseStep7Cfg(DP_MULTI_SUBSYSTEM_SNIPPET);
+  assertEqual(data.dpSlaves.length, 2, 'two separate slaves for same dpAddress in different subsystems');
+
+  const s1 = data.dpSlaves.find(s => s.dpSubsystem === 1);
+  const s2 = data.dpSlaves.find(s => s.dpSubsystem === 2);
+
+  assert(s1 !== undefined, 'slave in dpSubsystem 1 found');
+  assert(s2 !== undefined, 'slave in dpSubsystem 2 found');
+
+  assertEqual(s1.name,        'Slave1_Sub1', 'slave in subsystem 1 name');
+  assertEqual(s1.dpSubsystem, 1,             'slave 1 dpSubsystem = 1');
+  assertEqual(s1.dpAddress,   3,             'slave 1 dpAddress = 3');
+  assertEqual(s1.slots.length, 1,            'slave 1 has one slot');
+  assertEqual(s1.slots[0].signals[0].name, 'Slave1_Sub1_DI0', 'slot assigned to correct slave (sub 1)');
+
+  assertEqual(s2.name,        'Slave1_Sub2', 'slave in subsystem 2 name');
+  assertEqual(s2.dpSubsystem, 2,             'slave 2 dpSubsystem = 2');
+  assertEqual(s2.slots.length, 1,            'slave 2 has one slot');
+  assertEqual(s2.slots[0].signals[0].name, 'Slave1_Sub2_DI0', 'slot assigned to correct slave (sub 2)');
+});
+
+describe('DP signals — dpSubsystem propagated to signal list (Bug 3)', () => {
+  const data = parseStep7Cfg(DP_MULTI_SUBSYSTEM_SNIPPET);
+  assertEqual(data.signals.length, 2, 'two signals total');
+
+  const sig1 = data.signals.find(s => s.symbolName === 'Slave1_Sub1_DI0');
+  const sig2 = data.signals.find(s => s.symbolName === 'Slave1_Sub2_DI0');
+
+  assert(sig1 !== undefined, 'signal for subsystem 1 found');
+  assertEqual(sig1.dpSubsystem, 1, 'signal 1 dpSubsystem = 1');
+
+  assert(sig2 !== undefined, 'signal for subsystem 2 found');
+  assertEqual(sig2.dpSubsystem, 2, 'signal 2 dpSubsystem = 2');
 });
 
 // ── Summary ────────────────────────────────────────────────────────────────
