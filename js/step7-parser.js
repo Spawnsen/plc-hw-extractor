@@ -8,6 +8,31 @@
 
 'use strict';
 
+// ─── Block keyword helpers ────────────────────────────────────────────────────
+
+/**
+ * Returns true if the trimmed line is a block-closing keyword.
+ * Siemens CFG files use both "END" (HW Konfig actual export) and
+ * "ENDE" (as shown in the PCS 7 Projektierungshandbuch ch. 10.6.2).
+ * Neither variant starts a compound keyword like END_OF_... or ENDE_...,
+ * so we accept exactly /^END(E)?$/i.
+ *
+ * @param {string} trimmed
+ * @returns {boolean}
+ */
+function _isBlockEnd(trimmed) {
+  return /^ENDE?$/i.test(trimmed);
+}
+
+/**
+ * Returns true if the trimmed line is a block-opening keyword.
+ * @param {string} trimmed
+ * @returns {boolean}
+ */
+function _isBlockBegin(trimmed) {
+  return /^BEGIN$/i.test(trimmed);
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -109,8 +134,8 @@ function _parseStation(lines) {
 
     if (!inStation) continue;
 
-    if (/^BEGIN\b/i.test(trimmed)) { depth++; continue; }
-    if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
+    if (_isBlockBegin(trimmed)) { depth++; continue; }
+    if (_isBlockEnd(trimmed)) {
       depth--;
       if (depth <= 0) break;
       continue;
@@ -154,8 +179,8 @@ function _parseSubnets(lines) {
 
     if (!inBlock || !current) continue;
 
-    if (/^BEGIN\b/i.test(trimmed)) { depth++; continue; }
-    if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
+    if (_isBlockBegin(trimmed)) { depth++; continue; }
+    if (_isBlockEnd(trimmed)) {
       depth--;
       if (depth <= 0) {
         subnets.push(current);
@@ -274,8 +299,10 @@ function _parseDpSlaves(lines) {
 
     // ── Slave header: DPSUBSYSTEM 1, DPADDRESS 3, "DP2V0550.GSD", "SS0001"
     // Must have DPADDRESS but NOT SLOT
+    // NOTE: Siemens documentation (PCS7 manual ch.10.6.2) uses "DPADRESS" (single D) —
+    //       both spellings are accepted here for compatibility.
     const slaveMatch = trimmed.match(
-      /^DPSUBSYSTEM\s+(\d+)\s*,\s*DPADDRESS\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
+      /^DPSUBSYSTEM\s+(\d+)\s*,\s*DPAD{1,2}RESS\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
     );
     if (slaveMatch) {
       const dpSubsystem = parseInt(slaveMatch[1], 10);
@@ -301,8 +328,9 @@ function _parseDpSlaves(lines) {
     }
 
     // ── Slot header: DPSUBSYSTEM 1, DPADDRESS 3, SLOT 0, "221-1BF00  DI8xDC24V", "8DE"
+    // NOTE: "DPADRESS" (single D) also accepted — see Siemens PCS7 manual ch.10.6.2.
     const slotMatch = trimmed.match(
-      /^DPSUBSYSTEM\s+(\d+)\s*,\s*DPADDRESS\s+(\d+)\s*,\s*SLOT\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
+      /^DPSUBSYSTEM\s+(\d+)\s*,\s*DPAD{1,2}RESS\s+(\d+)\s*,\s*SLOT\s+(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*$/i
     );
     if (slotMatch) {
       const dpSubsystem = parseInt(slotMatch[1], 10);
@@ -353,8 +381,8 @@ function _readSlaveProperties(lines, startIdx, slave) {
   for (; i < lines.length; i++) {
     const trimmed = lines[i].trim();
 
-    if (/^BEGIN\b/i.test(trimmed)) { depth++; continue; }
-    if (/^END\b/i.test(trimmed) && !trimmed.match(/^END_/i)) {
+    if (_isBlockBegin(trimmed)) { depth++; continue; }
+    if (_isBlockEnd(trimmed)) {
       depth--;
       if (depth <= 0) return i;
       inLocalInAddr = false; // exited nested sub-block
@@ -378,7 +406,7 @@ function _readSlaveProperties(lines, startIdx, slave) {
       inLocalInAddr = false;
       continue;
     }
-    if (inLocalInAddr && trimmed && !/^BEGIN\b/i.test(trimmed) && !/^END\b/i.test(trimmed)) {
+    if (inLocalInAddr && trimmed && !_isBlockBegin(trimmed) && !_isBlockEnd(trimmed)) {
       inLocalInAddr = false;
     }
   }
@@ -405,11 +433,11 @@ function _readSlotBlock(lines, startIdx, slotObj) {
   for (; i < lines.length; i++) {
     const trimmed = lines[i].trim();
 
-    if (/^BEGIN\b/i.test(trimmed)) {
+    if (_isBlockBegin(trimmed)) {
       depth++;
       continue;
     }
-    if (/^END\b/i.test(trimmed) && !/^END_/i.test(trimmed)) {
+    if (_isBlockEnd(trimmed)) {
       depth--;
       if (depth === 0) return i;      // outer block closed — done
       if (depth === 1) inLocalAddresses = false; // exited nested sub-block
@@ -751,16 +779,16 @@ function _skipBlock(lines, startIdx) {
   // Skip leading blank lines
   while (i < lines.length && !lines[i].trim()) i++;
 
-  if (i >= lines.length || !/^BEGIN\b/i.test(lines[i].trim())) {
+  if (i >= lines.length || !_isBlockBegin(lines[i].trim())) {
     return startIdx - 1; // no block present
   }
 
   let depth = 0;
   for (; i < lines.length; i++) {
     const t = lines[i].trim();
-    if (/^BEGIN\b/i.test(t)) {
+    if (_isBlockBegin(t)) {
       depth++;
-    } else if (/^END\b/i.test(t) && !/^END_/i.test(t)) {
+    } else if (_isBlockEnd(t)) {
       depth--;
       if (depth === 0) return i;
     }
@@ -788,8 +816,8 @@ function _readPnParticipantBlock(lines, startIdx, dev) {
   for (; i < lines.length; i++) {
     const trimmed = lines[i].trim();
 
-    if (/^BEGIN\b/i.test(trimmed)) { depth++; continue; }
-    if (/^END\b/i.test(trimmed) && !/^END_/i.test(trimmed)) {
+    if (_isBlockBegin(trimmed)) { depth++; continue; }
+    if (_isBlockEnd(trimmed)) {
       depth--;
       if (depth <= 0) return i;
       inLocalInAddr = false; // exited nested sub-block
@@ -842,7 +870,7 @@ function _readPnParticipantBlock(lines, startIdx, dev) {
       inLocalInAddr = false;
       continue;
     }
-    if (inLocalInAddr && trimmed && !/^BEGIN\b/i.test(trimmed) && !/^END\b/i.test(trimmed)) {
+    if (inLocalInAddr && trimmed && !_isBlockBegin(trimmed) && !_isBlockEnd(trimmed)) {
       inLocalInAddr = false;
     }
   }

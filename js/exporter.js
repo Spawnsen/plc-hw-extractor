@@ -137,7 +137,7 @@ function buildInventory(data) {
     }
   }
 
-  // PROFINET devices
+  // PROFINET devices (Kopfmodul)
   for (const dev of ((data.profinet && data.profinet.devices) || [])) {
     const key = dev.gsdml || dev.name;
     if (!key) continue;
@@ -151,6 +151,26 @@ function buildInventory(data) {
         type:          'PN-Device',
         count:         1,
       });
+    }
+  }
+
+  // PROFINET Slot-Module (Slot 0 = Kopfmodul, bereits oben erfasst)
+  for (const dev of ((data.profinet && data.profinet.devices) || [])) {
+    for (const slot of (dev.slots || [])) {
+      if (slot.slot === 0) continue;
+      const key = slot.moduleType || slot.moduleName;
+      if (!key) continue;
+      const existing = map.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        map.set(key, {
+          articleNumber: slot.moduleType || '–',
+          name:          slot.moduleName || '–',
+          type:          'PN-Modul',
+          count:         1,
+        });
+      }
     }
   }
 
@@ -221,12 +241,12 @@ function exportAsCsv(data, sections) {
     blocks.push([
       '=== Station Info ===',
       _csvRow(['Feld', 'Wert']),
-      _csvRow(['Name',         s.name          || '']),
-      _csvRow(['Typ',          s.type          || '']),
-      _csvRow(['Asset-ID',     s.assetId       || '']),
-      _csvRow(['Dateiversion', s.fileVersion   || '']),
-      _csvRow(['STEP7 Version',s.step7Version  || '']),
-      _csvRow(['Erstellt',     s.createdAt     || '']),
+      _csvRow(['Name',         s.name                       || '']),
+      _csvRow(['Typ',          s.type                       || '']),
+      _csvRow(['Asset-ID',     s.assetId                    || '']),
+      _csvRow(['Dateiversion', (data.meta && data.meta.fileVersion)  || '']),
+      _csvRow(['STEP7 Version',(data.meta && data.meta.step7Version) || '']),
+      _csvRow(['Erstellt',     (data.meta && data.meta.created)      || '']),
     ].join('\n'));
   }
 
@@ -263,35 +283,46 @@ function exportAsCsv(data, sections) {
     blocks.push(rows.join('\n'));
   }
 
-  // PROFINET Teilnehmer
+  // PROFINET Teilnehmer (mit Slots)
   if (activeSections.includes('pndevices')) {
     const pnDevices = (data.profinet && data.profinet.devices) || [];
     if (pnDevices.length) {
-      const rows = ['=== PROFINET Teilnehmer ===', _csvRow(['Name', 'IOADDRESS', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Module', 'GSDML', 'Diagnoseadresse'])];
+      const rows = ['=== PROFINET Teilnehmer ===', _csvRow(['Name', 'IOADDRESS', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'GSDML', 'Diagnoseadresse', 'Slot', 'Modul-Bestellnr.', 'Modulname'])];
       for (const dev of pnDevices) {
-        rows.push(_csvRow([dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.modulesCount || 0, dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '']));
+        if (!dev.slots || !dev.slots.length) {
+          rows.push(_csvRow([dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '', '', '', '']));
+        } else {
+          for (const slot of dev.slots) {
+            rows.push(_csvRow([dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '', slot.slot, slot.moduleType || '', slot.moduleName || '']));
+          }
+        }
       }
       blocks.push(rows.join('\n'));
     }
   }
 
-  // I/O Signale
-  if (activeSections.includes('signals') && data.signals && data.signals.length) {
-    const rows = ['=== I/O Signale ===', _csvRow(['Slave', 'DP-Adresse', 'Modul', 'Slot', 'Typ', 'Byte', 'Bit', 'Symbolname', 'Kommentar'])];
-    for (const sig of data.signals) {
-      rows.push(_csvRow([
-        sig.slaveName    || '',
-        sig.slaveAddress != null ? sig.slaveAddress : '',
-        sig.module       || '',
-        sig.slot         != null ? sig.slot : '',
-        sig.type         || '',
-        sig.byteAddress  != null ? sig.byteAddress : '',
-        sig.bit          != null ? sig.bit : '',
-        sig.symbolName   || '',
-        sig.comment      || '',
-      ]));
+  // I/O Signale (DP + PN)
+  if (activeSections.includes('signals')) {
+    const dpSignals = data.signals || [];
+    const pnSignals = ((data.profinet && data.profinet.devices) || []).flatMap(d => d.signals || []);
+    const allSigs   = [...dpSignals, ...pnSignals];
+    if (allSigs.length) {
+      const rows = ['=== I/O Signale ===', _csvRow(['Gerät', 'Adresse', 'Modul', 'Slot', 'Typ', 'Byte', 'Bit', 'Symbolname', 'Kommentar'])];
+      for (const sig of allSigs) {
+        rows.push(_csvRow([
+          sig.slaveName  || sig.deviceName  || '',
+          sig.slaveAddress != null ? sig.slaveAddress : (sig.ioAddress != null ? sig.ioAddress : ''),
+          sig.module       || '',
+          sig.slot         != null ? sig.slot : '',
+          sig.type         || '',
+          sig.byteAddress  != null ? sig.byteAddress : '',
+          sig.bit          != null ? sig.bit : '',
+          sig.symbolName   || sig.name || '',
+          sig.comment      || '',
+        ]));
+      }
+      blocks.push(rows.join('\n'));
     }
-    blocks.push(rows.join('\n'));
   }
 
   // Inventarliste
@@ -340,12 +371,12 @@ function exportAsExcel(data, sections) {
     const s = data.station;
     const aoa = [
       ['Feld', 'Wert'],
-      ['Name',          s.name         || ''],
-      ['Typ',           s.type         || ''],
-      ['Asset-ID',      s.assetId      || ''],
-      ['Dateiversion',  s.fileVersion  || ''],
-      ['STEP7 Version', s.step7Version || ''],
-      ['Erstellt',      s.createdAt    || ''],
+      ['Name',          s.name                              || ''],
+      ['Typ',           s.type                              || ''],
+      ['Asset-ID',      s.assetId                           || ''],
+      ['Dateiversion',  (data.meta && data.meta.fileVersion)  || ''],
+      ['STEP7 Version', (data.meta && data.meta.step7Version) || ''],
+      ['Erstellt',      (data.meta && data.meta.created)      || ''],
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Station Info');
   }
@@ -383,35 +414,46 @@ function exportAsExcel(data, sections) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'DP-Slaves');
   }
 
-  // PROFINET Teilnehmer
+  // PROFINET Teilnehmer (mit Slots)
   if (activeSections.includes('pndevices')) {
     const pnDevices = (data.profinet && data.profinet.devices) || [];
     if (pnDevices.length) {
-      const aoa = [['Name', 'IOADDRESS', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Module', 'GSDML', 'Diagnoseadresse']];
+      const aoa = [['Name', 'IOADDRESS', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'GSDML', 'Diagnoseadresse', 'Slot', 'Modul-Bestellnr.', 'Modulname']];
       for (const dev of pnDevices) {
-        aoa.push([dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.modulesCount || 0, dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '']);
+        if (!dev.slots || !dev.slots.length) {
+          aoa.push([dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '', '', '', '']);
+        } else {
+          for (const slot of dev.slots) {
+            aoa.push([dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '', slot.slot, slot.moduleType || '', slot.moduleName || '']);
+          }
+        }
       }
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'PROFINET Teilnehmer');
     }
   }
 
-  // IO-Signale
-  if (activeSections.includes('signals') && data.signals) {
-    const aoa = [['Slave', 'DP-Adresse', 'Modul', 'Slot', 'Typ', 'Byte', 'Bit', 'Symbolname', 'Kommentar']];
-    for (const sig of (data.signals || [])) {
-      aoa.push([
-        sig.slaveName    || '',
-        sig.slaveAddress != null ? sig.slaveAddress : '',
-        sig.module       || '',
-        sig.slot         != null ? sig.slot : '',
-        sig.type         || '',
-        sig.byteAddress  != null ? sig.byteAddress : '',
-        sig.bit          != null ? sig.bit : '',
-        sig.symbolName   || '',
-        sig.comment      || '',
-      ]);
+  // IO-Signale (DP + PN)
+  if (activeSections.includes('signals')) {
+    const dpSignals = data.signals || [];
+    const pnSignals = ((data.profinet && data.profinet.devices) || []).flatMap(d => d.signals || []);
+    const allSigs   = [...dpSignals, ...pnSignals];
+    if (allSigs.length) {
+      const aoa = [['Gerät', 'Adresse', 'Modul', 'Slot', 'Typ', 'Byte', 'Bit', 'Symbolname', 'Kommentar']];
+      for (const sig of allSigs) {
+        aoa.push([
+          sig.slaveName  || sig.deviceName  || '',
+          sig.slaveAddress != null ? sig.slaveAddress : (sig.ioAddress != null ? sig.ioAddress : ''),
+          sig.module       || '',
+          sig.slot         != null ? sig.slot : '',
+          sig.type         || '',
+          sig.byteAddress  != null ? sig.byteAddress : '',
+          sig.bit          != null ? sig.bit : '',
+          sig.symbolName   || sig.name || '',
+          sig.comment      || '',
+        ]);
+      }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'IO-Signale');
     }
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'IO-Signale');
   }
 
   // Inventarliste
@@ -469,12 +511,12 @@ function exportAsPdf(data, sections) {
   if (activeSections.includes('station') && data.station) {
     const s = data.station;
     sectionHtml.push(`<section><h2>Station Info</h2>${_htmlTable(['Feld', 'Wert'], [
-      ['Name',          s.name         || ''],
-      ['Typ',           s.type         || ''],
-      ['Asset-ID',      s.assetId      || ''],
-      ['Dateiversion',  s.fileVersion  || ''],
-      ['STEP7 Version', s.step7Version || ''],
-      ['Erstellt',      s.createdAt    || ''],
+      ['Name',          s.name                              || ''],
+      ['Typ',           s.type                              || ''],
+      ['Asset-ID',      s.assetId                           || ''],
+      ['Dateiversion',  (data.meta && data.meta.fileVersion)  || ''],
+      ['STEP7 Version', (data.meta && data.meta.step7Version) || ''],
+      ['Erstellt',      (data.meta && data.meta.created)      || ''],
     ])}</section>`);
   }
 
@@ -505,29 +547,43 @@ function exportAsPdf(data, sections) {
     sectionHtml.push(`<section><h2>DP-Slaves</h2>${_htmlTable(['DP-Adresse', 'GSD-Datei', 'Slave-Name', 'Slot', 'Modul', 'Richtung', 'Byte-Adresse'], rows)}</section>`);
   }
 
-  // PROFINET Teilnehmer
+  // PROFINET Teilnehmer (mit Slots)
   if (activeSections.includes('pndevices')) {
     const pnDevices = (data.profinet && data.profinet.devices) || [];
     if (pnDevices.length) {
-      const rows = pnDevices.map(dev => [dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.modulesCount || 0, dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '']);
-      sectionHtml.push(`<section><h2>PROFINET Teilnehmer</h2>${_htmlTable(['Name', 'IOADDRESS', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'Module', 'GSDML', 'Diagnoseadresse'], rows)}</section>`);
+      const rows = [];
+      for (const dev of pnDevices) {
+        if (!dev.slots || !dev.slots.length) {
+          rows.push([dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '', '', '', '']);
+        } else {
+          for (const slot of dev.slots) {
+            rows.push([dev.name || '', dev.ioAddress, dev.ip || '', dev.subnetMask || '', dev.mac || '', dev.gsdml || '', dev.diagAddress != null ? dev.diagAddress : '', slot.slot, slot.moduleType || '', slot.moduleName || '']);
+          }
+        }
+      }
+      sectionHtml.push(`<section><h2>PROFINET Teilnehmer</h2>${_htmlTable(['Name', 'IOADDRESS', 'IP-Adresse', 'Subnetzmaske', 'MAC', 'GSDML', 'Diagnoseadresse', 'Slot', 'Modul-Bestellnr.', 'Modulname'], rows)}</section>`);
     }
   }
 
-  // I/O Signale
-  if (activeSections.includes('signals') && data.signals && data.signals.length) {
-    const rows = data.signals.map(sig => [
-      sig.slaveName    || '',
-      sig.slaveAddress != null ? sig.slaveAddress : '',
-      sig.module       || '',
-      sig.slot         != null ? sig.slot : '',
-      sig.type         || '',
-      sig.byteAddress  != null ? sig.byteAddress : '',
-      sig.bit          != null ? sig.bit : '',
-      sig.symbolName   || '',
-      sig.comment      || '',
-    ]);
-    sectionHtml.push(`<section><h2>I/O Signale</h2>${_htmlTable(['Slave', 'DP-Adresse', 'Modul', 'Slot', 'Typ', 'Byte', 'Bit', 'Symbolname', 'Kommentar'], rows)}</section>`);
+  // I/O Signale (DP + PN)
+  if (activeSections.includes('signals')) {
+    const dpSignals = data.signals || [];
+    const pnSignals = ((data.profinet && data.profinet.devices) || []).flatMap(d => d.signals || []);
+    const allSigs   = [...dpSignals, ...pnSignals];
+    if (allSigs.length) {
+      const rows = allSigs.map(sig => [
+        sig.slaveName  || sig.deviceName  || '',
+        sig.slaveAddress != null ? sig.slaveAddress : (sig.ioAddress != null ? sig.ioAddress : ''),
+        sig.module       || '',
+        sig.slot         != null ? sig.slot : '',
+        sig.type         || '',
+        sig.byteAddress  != null ? sig.byteAddress : '',
+        sig.bit          != null ? sig.bit : '',
+        sig.symbolName   || sig.name || '',
+        sig.comment      || '',
+      ]);
+      sectionHtml.push(`<section><h2>I/O Signale</h2>${_htmlTable(['Gerät', 'Adresse', 'Modul', 'Slot', 'Typ', 'Byte', 'Bit', 'Symbolname', 'Kommentar'], rows)}</section>`);
+    }
   }
 
   // Inventarliste

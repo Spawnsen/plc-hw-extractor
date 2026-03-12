@@ -234,6 +234,9 @@
             <i data-lucide="chevron-down" class="collapsible-icon" style="width:18px;height:18px;"></i>
           </button>
           <div class="collapsible-body">
+            <div class="expand-all-bar">
+              <button class="btn btn-ghost btn-xs" id="btn-expand-all-slaves">Alle aufklappen</button>
+            </div>
             <div class="slaves-list" id="slaves-list">
               <!-- Populated by JS -->
             </div>
@@ -251,6 +254,9 @@
             <i data-lucide="chevron-down" class="collapsible-icon" style="width:18px;height:18px;"></i>
           </button>
           <div class="collapsible-body">
+            <div class="expand-all-bar">
+              <button class="btn btn-ghost btn-xs" id="btn-expand-all-pn">Alle aufklappen</button>
+            </div>
             <div id="pn-participants-list">
               <!-- Populated by JS -->
             </div>
@@ -402,13 +408,14 @@
     const signalFilterCount = document.getElementById('signal-filter-count');
     const signalsTableBody  = document.getElementById('signals-table-body');
 
-    // ── Collapsible Sections ──────────────────────────────────────
-    document.querySelectorAll('.collapsible-header').forEach(header => {
-      header.addEventListener('click', () => {
+    // ── Collapsible Sections (nur Haupt-Sektionen, nicht Slave-Karten) ──
+    document.querySelectorAll('.collapsible-section:not(.slave-collapsible) > .collapsible-header').forEach(header => {
+      header.addEventListener('click', (e) => {
+        // Klicks auf Buttons innerhalb des Headers (z.B. "Alle aufklappen") nicht weiterleiten
+        if (e.target.closest('button') && e.target.closest('button') !== header) return;
         const section = header.closest('.collapsible-section');
         const isOpen  = section.classList.toggle('open');
         header.setAttribute('aria-expanded', isOpen.toString());
-        // Re-render icons (chevron rotates via CSS)
       });
     });
 
@@ -649,6 +656,23 @@
       renderRack(data.rack);
       renderSlaves(slaves);
       renderPnParticipants(pnDevices);
+
+      // Slave-Karten Toggle
+      bindSlaveCardListeners('slaves-list');
+      bindSlaveCardListeners('pn-participants-list');
+
+      // Expand-All Buttons binden
+      const btnSlaves = document.getElementById('btn-expand-all-slaves');
+      const btnPn     = document.getElementById('btn-expand-all-pn');
+      if (btnSlaves) {
+        btnSlaves.textContent = 'Alle aufklappen';
+        btnSlaves.onclick = () => toggleAllSlaveCards('#slaves-list', btnSlaves);
+      }
+      if (btnPn) {
+        btnPn.textContent = 'Alle aufklappen';
+        btnPn.onclick = () => toggleAllSlaveCards('#pn-participants-list', btnPn);
+      }
+
       renderSignalTable();
     }
 
@@ -780,7 +804,7 @@
     }
 
     /**
-     * Renders the DP Slaves section.
+     * Renders the DP Slaves section as nested collapsible cards.
      * @param {Array} slaves
      */
     function renderSlaves(slaves) {
@@ -791,8 +815,11 @@
         return;
       }
 
-      list.innerHTML = slaves.map(slave => {
-        const slotsHtml = (slave.slots || []).length
+      list.innerHTML = slaves.map((slave, idx) => {
+        const slotCount   = (slave.slots || []).length;
+        const signalCount = (slave.slots || []).reduce((n, s) => n + (s.signals || []).length, 0);
+
+        const slotsHtml = slotCount
           ? `
             <div class="slave-slots-table">
               <div class="table-wrapper">
@@ -826,23 +853,58 @@
                 </table>
               </div>
             </div>`
-          : '<p class="empty-state" style="padding:var(--spacing-md)">Keine Slots gefunden.</p>';
+          : '<p class="empty-state" style="padding:var(--spacing-md)">Keine Module gefunden.</p>';
 
         return `
-          <div class="slave-card">
-            <div class="slave-header">
-              <span class="slave-name">${_escapeHtml(slave.name || 'Slave ' + slave.dpAddress)}</span>
-              <span class="slave-addr">DP ${slave.dpAddress}</span>
-              ${slave.gsdFile ? `<span class="slave-gsd">${_escapeHtml(slave.gsdFile)}</span>` : ''}
+          <div class="collapsible-section slave-collapsible" id="slave-${idx}">
+            <button class="collapsible-header slave-collapsible-header" aria-expanded="false">
+              <div class="collapsible-header-left">
+                <span class="slave-name">${_escapeHtml(slave.name || 'Slave ' + slave.dpAddress)}</span>
+                <span class="slave-addr">DP ${slave.dpAddress}</span>
+                ${slave.gsdFile ? `<span class="slave-gsd">${_escapeHtml(slave.gsdFile)}</span>` : ''}
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="badge badge-secondary">${slotCount} Module</span>
+                <span class="badge badge-secondary">${signalCount} Signale</span>
+                <i data-lucide="chevron-down" class="collapsible-icon" style="width:16px;height:16px;"></i>
+              </div>
+            </button>
+            <div class="collapsible-body">
+              ${slotsHtml}
             </div>
-            ${slotsHtml}
           </div>
         `;
       }).join('');
+
+      lucide.createIcons();
+    }
+
+    function toggleAllSlaveCards(containerSelector, btn) {
+      const cards  = document.querySelectorAll(containerSelector + ' .slave-collapsible');
+      const anyOpen = Array.from(cards).some(c => c.classList.contains('open'));
+      cards.forEach(card => {
+        const open = !anyOpen;
+        card.classList.toggle('open', open);
+        card.querySelector('.slave-collapsible-header').setAttribute('aria-expanded', open.toString());
+      });
+      btn.textContent = anyOpen ? 'Alle aufklappen' : 'Alle einklappen';
+    }
+
+    // Event-Delegation für Slave-Karten (wird nach renderSlaves/renderPnParticipants aktiv)
+    function bindSlaveCardListeners(containerId) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+      container.addEventListener('click', e => {
+        const btn = e.target.closest('.slave-collapsible-header');
+        if (!btn) return;
+        const section = btn.closest('.slave-collapsible');
+        const isOpen  = section.classList.toggle('open');
+        btn.setAttribute('aria-expanded', isOpen.toString());
+      });
     }
 
     /**
-     * Renders the PROFINET Teilnehmer section (new IOADDRESS-format devices).
+     * Renders the PROFINET Teilnehmer section as nested collapsible cards.
      * @param {Array} pnParticipants
      */
     function renderPnParticipants(pnParticipants) {
@@ -853,38 +915,74 @@
         return;
       }
 
-      container.innerHTML = `
-        <div class="table-wrapper">
-          <table aria-label="PROFINET Teilnehmer">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>IOADDRESS</th>
-                <th>IP-Adresse</th>
-                <th>Subnetzmaske</th>
-                <th>MAC</th>
-                <th>Module</th>
-                <th>GSDML</th>
-                <th>Diagnoseadresse</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${pnParticipants.map(dev => `
-                <tr>
-                  <td>${_escapeHtml(dev.name || '–')}</td>
-                  <td>${dev.ioAddress}</td>
-                  <td><code>${_escapeHtml(dev.ip || '–')}</code></td>
-                  <td><code>${_escapeHtml(dev.subnetMask || '–')}</code></td>
-                  <td><code style="font-size:0.78rem">${_escapeHtml(dev.mac || '–')}</code></td>
-                  <td>${dev.modulesCount || 0}</td>
-                  <td style="font-size:0.78rem">${_escapeHtml(dev.gsdml || '–')}</td>
-                  <td>${dev.diagAddress !== null && dev.diagAddress !== undefined ? dev.diagAddress : '–'}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `;
+      container.innerHTML = pnParticipants.map((dev, idx) => {
+        const slotCount   = (dev.slots || []).length;
+        const signalCount = dev.signals ? dev.signals.length : 0;
+
+        const detailRows = [
+          { label: 'IP-Adresse',      value: dev.ip          || '–' },
+          { label: 'Subnetzmaske',    value: dev.subnetMask  || '–' },
+          { label: 'MAC',             value: dev.mac         || '–' },
+          { label: 'GSDML',           value: dev.gsdml       || '–' },
+          { label: 'Diagnoseadresse', value: dev.diagAddress !== null && dev.diagAddress !== undefined ? dev.diagAddress : '–' },
+        ].map(r => `
+          <div class="info-item">
+            <span class="info-label">${_escapeHtml(r.label)}</span>
+            <span class="info-value"><code>${_escapeHtml(String(r.value))}</code></span>
+          </div>
+        `).join('');
+
+        const slotsHtml = slotCount
+          ? `
+            <div class="slave-slots-table" style="margin-top:12px">
+              <div class="table-wrapper">
+                <table aria-label="PN Slots">
+                  <thead>
+                    <tr>
+                      <th>Slot</th>
+                      <th>Subslot</th>
+                      <th>Modul</th>
+                      <th>Signale</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${dev.slots.map(slot => `
+                      <tr>
+                        <td>${slot.slot !== undefined ? slot.slot : '–'}</td>
+                        <td>${slot.subslot !== undefined ? slot.subslot : '–'}</td>
+                        <td><code style="font-size:0.8rem">${_escapeHtml(slot.moduleType || slot.moduleName || '–')}</code></td>
+                        <td>${(slot.signals || []).length}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>`
+          : '<p class="empty-state" style="padding:var(--spacing-md)">Keine Module gefunden.</p>';
+
+        return `
+          <div class="collapsible-section slave-collapsible" id="pn-dev-${idx}">
+            <button class="collapsible-header slave-collapsible-header" aria-expanded="false">
+              <div class="collapsible-header-left">
+                <span class="slave-name">${_escapeHtml(dev.name || 'IO ' + dev.ioAddress)}</span>
+                <span class="slave-addr">IO ${dev.ioAddress}</span>
+                <span class="slave-gsd">${_escapeHtml(dev.ip || '–')}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="badge badge-secondary">${slotCount} Module</span>
+                <span class="badge badge-secondary">${signalCount} Signale</span>
+                <i data-lucide="chevron-down" class="collapsible-icon" style="width:16px;height:16px;"></i>
+              </div>
+            </button>
+            <div class="collapsible-body">
+              <div class="info-grid" style="margin-bottom:4px">${detailRows}</div>
+              ${slotsHtml}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      lucide.createIcons();
     }
 
     /**
